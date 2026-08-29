@@ -1,0 +1,25 @@
+# Codex/本地临时文件
+.codex_tmp/
+$stage/
+
+# 操作系统与编辑器文件
+Thumbs.db
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 日志与缓存
+*.log
+__pycache__/
+*.py[cod]
+
+# Excel 临时锁定文件
+~$*.xlsx
+~$*.xls
+
+# 本地环境配置（可能包含密码或个人路径）
+.env
+.env.*
+!.env.example

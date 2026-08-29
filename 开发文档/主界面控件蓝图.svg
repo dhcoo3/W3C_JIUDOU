@@ -1,0 +1,167 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2114" height="920" viewBox="0 0 2114 920">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#101b2d"/>
+      <stop offset="1" stop-color="#07101c"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#233751"/>
+      <stop offset="1" stop-color="#111d30"/>
+    </linearGradient>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M32 0H0V32" fill="none" stroke="#5c87ad" stroke-opacity=".12"/>
+    </pattern>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="5" stdDeviation="6" flood-color="#000" flood-opacity=".5"/>
+    </filter>
+    <style>
+      .title { font: 700 26px Arial, sans-serif; fill: #d8f1ff; letter-spacing: 1px; }
+      .subtitle { font: 14px Arial, sans-serif; fill: #83b2d0; }
+      .label { font: 700 15px Arial, sans-serif; fill: #e8f7ff; }
+      .name { font: 12px Consolas, monospace; fill: #91d8ff; }
+      .type { font: 12px Arial, sans-serif; fill: #aac6d8; }
+      .small { font: 11px Arial, sans-serif; fill: #7fa4bb; }
+      .call { font: 700 14px Arial, sans-serif; fill: #08111d; }
+      .wire { fill: none; stroke-width: 2; stroke-linecap: round; }
+      .box { stroke-width: 2; rx: 7; }
+      .slot { fill: #0a1421; stroke: #8fc5e6; stroke-width: 1.5; rx: 4; }
+      .text { font: 12px Arial, sans-serif; fill: #d9effc; }
+    </style>
+  </defs>
+
+  <rect width="2114" height="920" fill="url(#bg)"/>
+  <rect width="2114" height="920" fill="url(#grid)"/>
+  <text x="48" y="50" class="title">JIUDOU HUD BLUEPRINT · BOTTOM PANEL</text>
+  <text x="48" y="78" class="subtitle">控件位置与英文命名参考｜第一阶段：整张底图 + 控件占位｜目标：Warcraft III 1.27 DzFrame</text>
+
+  <!-- Main composition -->
+  <rect x="42" y="120" width="1608" height="700" rx="12" fill="#030912" stroke="#6fa8ca" stroke-width="2" filter="url(#shadow)"/>
+  <rect x="42" y="120" width="1608" height="700" rx="12" fill="url(#panel)" opacity=".82"/>
+  <rect x="42" y="120" width="1608" height="700" rx="12" fill="url(#grid)" opacity=".45"/>
+
+  <!-- Background strip -->
+  <rect x="58" y="525" width="1576" height="278" rx="8" fill="#172638" stroke="#a7cbe0" stroke-width="2"/>
+  <text x="78" y="552" class="name">HUDBottomBackground</text>
+  <text x="78" y="574" class="type">BACKDROP · forest_bottom_strip.blp · 不平铺</text>
+
+  <!-- Left utility buttons -->
+  <rect x="82" y="188" width="74" height="74" class="box" fill="#142c43" stroke="#55c8ff"/>
+  <text x="119" y="220" text-anchor="middle" class="label">助手</text>
+  <text x="119" y="242" text-anchor="middle" class="small">BUTTON</text>
+  <text x="170" y="193" class="name">HUDHelperButton</text>
+  <path d="M170 201H140V188" class="wire" stroke="#55c8ff"/>
+
+  <rect x="280" y="170" width="96" height="86" class="box" fill="#142c43" stroke="#55c8ff"/>
+  <circle cx="328" cy="208" r="24" fill="#274d67" stroke="#91d8ff"/>
+  <text x="328" y="245" text-anchor="middle" class="label">卡牌背包</text>
+  <text x="390" y="178" class="name">HUDCardPackButton</text>
+  <path d="M390 186H360V170" class="wire" stroke="#55c8ff"/>
+
+  <!-- Minimap -->
+  <rect x="82" y="330" width="278" height="238" class="box" fill="#0c1727" stroke="#43b7e6"/>
+  <rect x="100" y="350" width="242" height="190" fill="#243d55" stroke="#8fc5e6" stroke-width="2"/>
+  <path d="M111 501L180 385L240 468L321 365" fill="none" stroke="#7bc8ed" stroke-width="4" opacity=".6"/>
+  <circle cx="185" cy="425" r="7" fill="#ffcc66"/>
+  <circle cx="286" cy="475" r="7" fill="#e87979"/>
+  <text x="105" y="560" class="name">HUDMinimapPanel</text>
+  <text x="105" y="581" class="name">HUDMinimapFrame / HUDMinimapViewport</text>
+  <text x="105" y="601" class="type">BACKDROP 外框 + 原生小地图区域</text>
+  <circle cx="66" cy="330" r="14" fill="#43b7e6"/><text x="66" y="335" text-anchor="middle" class="call">1</text>
+  <path d="M80 330H54V300" class="wire" stroke="#43b7e6"/>
+
+  <!-- Card pack -->
+  <rect x="396" y="300" width="224" height="300" class="box" fill="#0c1727" stroke="#f1bd62"/>
+  <text x="410" y="324" class="label">CARD PACK</text>
+  <g>
+    <rect x="416" y="344" width="78" height="100" class="slot"/>
+    <rect x="512" y="344" width="78" height="100" class="slot"/>
+    <rect x="416" y="458" width="78" height="100" class="slot"/>
+    <rect x="512" y="458" width="78" height="100" class="slot"/>
+  </g>
+  <text x="410" y="584" class="name">HUDCardPackPanel</text>
+  <text x="410" y="605" class="type">6 × BACKDROP + 6 × BUTTON</text>
+  <circle cx="380" cy="300" r="14" fill="#f1bd62"/><text x="380" y="305" text-anchor="middle" class="call">2</text>
+  <path d="M394 300H370V270" class="wire" stroke="#f1bd62"/>
+
+  <!-- Command bar -->
+  <rect x="665" y="175" width="330" height="150" class="box" fill="#0c1727" stroke="#c48cff"/>
+  <text x="682" y="200" class="label">COMMAND BAR · 12 SLOTS</text>
+  <g>
+    <rect x="682" y="218" width="45" height="45" class="slot"/><rect x="737" y="218" width="45" height="45" class="slot"/><rect x="792" y="218" width="45" height="45" class="slot"/><rect x="847" y="218" width="45" height="45" class="slot"/><rect x="902" y="218" width="45" height="45" class="slot"/>
+    <rect x="682" y="272" width="45" height="35" class="slot"/><rect x="737" y="272" width="45" height="35" class="slot"/><rect x="792" y="272" width="45" height="35" class="slot"/><rect x="847" y="272" width="45" height="35" class="slot"/><rect x="902" y="272" width="45" height="35" class="slot"/>
+  </g>
+  <text x="1008" y="190" class="name">HUDCommandBar</text>
+  <text x="1008" y="210" class="name">HUDCommandSlot01..12</text>
+  <text x="1008" y="230" class="type">BACKDROP + BUTTON + cooldown</text>
+  <circle cx="648" cy="175" r="14" fill="#c48cff"/><text x="648" y="180" text-anchor="middle" class="call">3</text>
+  <path d="M663 175H638V150" class="wire" stroke="#c48cff"/>
+
+  <!-- Hero panel -->
+  <rect x="662" y="360" width="546" height="365" class="box" fill="#070d17" stroke="#63e6b5"/>
+  <rect x="690" y="424" width="188" height="230" fill="#1a2b3d" stroke="#d7b84c" stroke-width="3"/>
+  <rect x="707" y="441" width="154" height="174" fill="#4a6d88" stroke="#8fc5e6" stroke-width="2"/>
+  <circle cx="784" cy="514" r="50" fill="#86b7d2" opacity=".6"/>
+  <text x="784" y="627" text-anchor="middle" class="name">HUDHeroPortrait</text>
+  <text x="910" y="396" class="label">HERO PANEL</text>
+  <text x="910" y="420" class="name">HUDHeroPanel</text>
+  <text x="910" y="460" class="text">HUDHeroName</text>
+  <text x="910" y="486" class="text">HUDHeroLevel</text>
+  <rect x="910" y="505" width="240" height="16" fill="#27213a" stroke="#a27bff"/><rect x="910" y="505" width="165" height="16" fill="#8e42d4"/>
+  <text x="910" y="545" class="text">HUDHeroHealthBar / HUDHeroHealthText</text>
+  <rect x="910" y="558" width="240" height="13" fill="#252b25" stroke="#6fd391"/><rect x="910" y="558" width="205" height="13" fill="#43bb6d"/>
+  <text x="910" y="593" class="text">HUDHeroManaBar / HUDHeroManaText</text>
+  <rect x="910" y="606" width="240" height="13" fill="#172c3d" stroke="#65c7ff"/><rect x="910" y="606" width="185" height="13" fill="#2f9cd3"/>
+  <text x="910" y="648" class="text">STR · AGI · INT values</text>
+  <text x="910" y="672" class="name">HUDHeroStrengthValue</text>
+  <text x="910" y="691" class="name">HUDHeroAgilityValue</text>
+  <text x="910" y="710" class="name">HUDHeroIntelligenceValue</text>
+  <circle cx="644" cy="360" r="14" fill="#63e6b5"/><text x="644" y="365" text-anchor="middle" class="call">4</text>
+  <path d="M660 360H634V335" class="wire" stroke="#63e6b5"/>
+
+  <!-- Inventory -->
+  <rect x="1240" y="360" width="184" height="365" class="box" fill="#0c1727" stroke="#f0a76d"/>
+  <text x="1256" y="388" class="label">INVENTORY</text>
+  <g>
+    <rect x="1260" y="420" width="64" height="64" class="slot"/><rect x="1338" y="420" width="64" height="64" class="slot"/>
+    <rect x="1260" y="500" width="64" height="64" class="slot"/><rect x="1338" y="500" width="64" height="64" class="slot"/>
+    <rect x="1260" y="580" width="64" height="64" class="slot"/><rect x="1338" y="580" width="64" height="64" class="slot"/>
+  </g>
+  <text x="1256" y="678" class="name">HUDInventoryPanel</text>
+  <text x="1256" y="698" class="type">6 slots · icon/count/button</text>
+  <circle cx="1222" cy="360" r="14" fill="#f0a76d"/><text x="1222" y="365" text-anchor="middle" class="call">5</text>
+  <path d="M1238 360H1212V335" class="wire" stroke="#f0a76d"/>
+
+  <!-- Utility buttons -->
+  <rect x="1458" y="360" width="150" height="365" class="box" fill="#0c1727" stroke="#ff7e92"/>
+  <text x="1474" y="388" class="label">UTILITY</text>
+  <g>
+    <rect x="1478" y="420" width="54" height="54" class="slot"/><rect x="1540" y="420" width="54" height="54" class="slot"/>
+    <rect x="1478" y="488" width="54" height="54" class="slot"/><rect x="1540" y="488" width="54" height="54" class="slot"/>
+    <rect x="1478" y="556" width="54" height="54" class="slot"/><rect x="1540" y="556" width="54" height="54" class="slot"/>
+  </g>
+  <text x="1474" y="650" class="name">HUDUtilityButton01..06</text>
+  <text x="1474" y="670" class="type">BUTTON + icon + hotkey</text>
+  <circle cx="1440" cy="360" r="14" fill="#ff7e92"/><text x="1440" y="365" text-anchor="middle" class="call">6</text>
+  <path d="M1456 360H1430V335" class="wire" stroke="#ff7e92"/>
+
+  <!-- Right legend -->
+  <rect x="1690" y="120" width="382" height="700" rx="12" fill="#0b1726" stroke="#6fa8ca" stroke-width="2"/>
+  <text x="1720" y="164" class="title" font-size="21">CONTROL LEGEND</text>
+  <text x="1720" y="194" class="subtitle">制作时请按英文名建立独立控件</text>
+  <g>
+    <circle cx="1728" cy="245" r="14" fill="#43b7e6"/><text x="1728" y="250" text-anchor="middle" class="call">1</text><text x="1760" y="250" class="label">Minimap</text><text x="1760" y="272" class="name">HUDMinimapPanel</text>
+    <circle cx="1728" cy="315" r="14" fill="#f1bd62"/><text x="1728" y="320" text-anchor="middle" class="call">2</text><text x="1760" y="320" class="label">Card Pack</text><text x="1760" y="342" class="name">HUDCardPackPanel</text>
+    <circle cx="1728" cy="385" r="14" fill="#c48cff"/><text x="1728" y="390" text-anchor="middle" class="call">3</text><text x="1760" y="390" class="label">Command Bar</text><text x="1760" y="412" class="name">HUDCommandBar</text>
+    <circle cx="1728" cy="455" r="14" fill="#63e6b5"/><text x="1728" y="460" text-anchor="middle" class="call">4</text><text x="1760" y="460" class="label">Hero Panel</text><text x="1760" y="482" class="name">HUDHeroPanel</text>
+    <circle cx="1728" cy="525" r="14" fill="#f0a76d"/><text x="1728" y="530" text-anchor="middle" class="call">5</text><text x="1760" y="530" class="label">Inventory</text><text x="1760" y="552" class="name">HUDInventoryPanel</text>
+    <circle cx="1728" cy="595" r="14" fill="#ff7e92"/><text x="1728" y="600" text-anchor="middle" class="call">6</text><text x="1760" y="600" class="label">Utility Buttons</text><text x="1760" y="622" class="name">HUDUtilityPanel</text>
+  </g>
+  <line x1="1720" y1="665" x2="2040" y2="665" stroke="#32516b"/>
+  <text x="1720" y="700" class="label">制作优先级</text>
+  <text x="1720" y="728" class="text">1. 底图和区域外框</text>
+  <text x="1720" y="752" class="text">2. 槽位和按钮点击区域</text>
+  <text x="1720" y="776" class="text">3. 英雄、技能、物品占位</text>
+  <text x="1720" y="800" class="text">4. 状态层和动态文字</text>
+
+  <text x="48" y="870" class="subtitle">说明：蓝图中的尺寸为布局参考；实际 Lua 使用 GameUI 相对锚点，不使用固定屏幕像素。</text>
+</svg>
