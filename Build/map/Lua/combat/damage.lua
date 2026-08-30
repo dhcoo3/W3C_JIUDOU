@@ -1,5 +1,7 @@
 --- 统一战斗伤害事件服务。
 ---
+--- 项目所有战斗单位均使用 Hero 攻击与 Hero 护甲。Lua 伤害也明确使用 Hero 攻击类型，
+--- 从而不再触发普通/穿刺/攻城/魔法与轻中重甲之间的原生克制倍率。
 --- Warcraft III 1.27 没有 BlzSetEventDamage。普通攻击加成因此采用受伤事件后的
 --- 生命值补偿：原生攻击先完成护甲结算，本服务再直接扣除 floor(已结算伤害×普攻加成/100)
 --- 点生命。补偿使用 SetUnitState，不会再次触发 EVENT_UNIT_DAMAGED。
@@ -261,7 +263,7 @@ function module.deal(source, target, amount, damage_type)
             amount,
             true,
             false,
-            jass.ATTACK_TYPE_NORMAL,
+            jass.ATTACK_TYPE_HERO,
             damage_type or jass.DAMAGE_TYPE_MAGIC,
             jass.WEAPON_TYPE_WHOKNOWS
         )

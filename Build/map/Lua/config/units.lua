@@ -51,6 +51,8 @@ return {
         ["dmgplus1"] = 31,
         ["dmgpt1"] = 0.2,
         ["backsw1"] = 0.3,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["H0N0"] = {
         ["rawcode"] = "H0N0",
@@ -91,6 +93,8 @@ return {
         ["dmgplus1"] = 27,
         ["dmgpt1"] = 0.2,
         ["backsw1"] = 0.3,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["H0B0"] = {
         ["rawcode"] = "H0B0",
@@ -131,6 +135,8 @@ return {
         ["dmgplus1"] = 33,
         ["dmgpt1"] = 0.2,
         ["backsw1"] = 0.3,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["H0E0"] = {
         ["rawcode"] = "H0E0",
@@ -171,6 +177,8 @@ return {
         ["dmgplus1"] = 29,
         ["dmgpt1"] = 0.2,
         ["backsw1"] = 0.3,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["N1M1"] = {
         ["rawcode"] = "N1M1",
@@ -193,6 +201,8 @@ return {
         ["sides1"] = 5,
         ["dmgplus1"] = 17,
         ["acquire"] = 900,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["N1R1"] = {
         ["rawcode"] = "N1R1",
@@ -215,6 +225,8 @@ return {
         ["sides1"] = 5,
         ["dmgplus1"] = 14,
         ["acquire"] = 900,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["E1M1"] = {
         ["rawcode"] = "E1M1",
@@ -237,6 +249,8 @@ return {
         ["sides1"] = 8,
         ["dmgplus1"] = 54,
         ["acquire"] = 900,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["B1M1"] = {
         ["rawcode"] = "B1M1",
@@ -261,6 +275,8 @@ return {
         ["dmgplus1"] = 79,
         ["acquire"] = 900,
         ["hero"] = 0,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["N2M1"] = {
         ["rawcode"] = "N2M1",
@@ -283,6 +299,8 @@ return {
         ["sides1"] = 5,
         ["dmgplus1"] = 22,
         ["acquire"] = 900,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["N2R1"] = {
         ["rawcode"] = "N2R1",
@@ -305,6 +323,8 @@ return {
         ["sides1"] = 5,
         ["dmgplus1"] = 18,
         ["acquire"] = 900,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["E2M1"] = {
         ["rawcode"] = "E2M1",
@@ -327,6 +347,8 @@ return {
         ["sides1"] = 8,
         ["dmgplus1"] = 74,
         ["acquire"] = 900,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["B2M1"] = {
         ["rawcode"] = "B2M1",
@@ -351,6 +373,8 @@ return {
         ["dmgplus1"] = 119,
         ["acquire"] = 900,
         ["hero"] = 0,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["N3M1"] = {
         ["rawcode"] = "N3M1",
@@ -373,6 +397,8 @@ return {
         ["sides1"] = 5,
         ["dmgplus1"] = 27,
         ["acquire"] = 900,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["N3R1"] = {
         ["rawcode"] = "N3R1",
@@ -395,6 +421,8 @@ return {
         ["sides1"] = 5,
         ["dmgplus1"] = 22,
         ["acquire"] = 900,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["E3M1"] = {
         ["rawcode"] = "E3M1",
@@ -417,6 +445,8 @@ return {
         ["sides1"] = 8,
         ["dmgplus1"] = 94,
         ["acquire"] = 900,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["B3M1"] = {
         ["rawcode"] = "B3M1",
@@ -441,6 +471,8 @@ return {
         ["dmgplus1"] = 159,
         ["acquire"] = 900,
         ["hero"] = 0,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["N4M1"] = {
         ["rawcode"] = "N4M1",
@@ -463,6 +495,8 @@ return {
         ["sides1"] = 5,
         ["dmgplus1"] = 32,
         ["acquire"] = 900,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["N4R1"] = {
         ["rawcode"] = "N4R1",
@@ -485,6 +519,8 @@ return {
         ["sides1"] = 5,
         ["dmgplus1"] = 26,
         ["acquire"] = 900,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["E4M1"] = {
         ["rawcode"] = "E4M1",
@@ -507,6 +543,8 @@ return {
         ["sides1"] = 8,
         ["dmgplus1"] = 114,
         ["acquire"] = 900,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["B4M1"] = {
         ["rawcode"] = "B4M1",
@@ -531,6 +569,8 @@ return {
         ["dmgplus1"] = 199,
         ["acquire"] = 900,
         ["hero"] = 0,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["N5M1"] = {
         ["rawcode"] = "N5M1",
@@ -553,6 +593,8 @@ return {
         ["sides1"] = 5,
         ["dmgplus1"] = 37,
         ["acquire"] = 900,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["N5R1"] = {
         ["rawcode"] = "N5R1",
@@ -575,6 +617,8 @@ return {
         ["sides1"] = 5,
         ["dmgplus1"] = 30,
         ["acquire"] = 900,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["E5M1"] = {
         ["rawcode"] = "E5M1",
@@ -597,6 +641,8 @@ return {
         ["sides1"] = 8,
         ["dmgplus1"] = 134,
         ["acquire"] = 900,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["B5M1"] = {
         ["rawcode"] = "B5M1",
@@ -621,6 +667,8 @@ return {
         ["dmgplus1"] = 239,
         ["acquire"] = 900,
         ["hero"] = 0,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["N6M1"] = {
         ["rawcode"] = "N6M1",
@@ -643,6 +691,8 @@ return {
         ["sides1"] = 5,
         ["dmgplus1"] = 42,
         ["acquire"] = 900,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["N6R1"] = {
         ["rawcode"] = "N6R1",
@@ -665,6 +715,8 @@ return {
         ["sides1"] = 5,
         ["dmgplus1"] = 34,
         ["acquire"] = 900,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["E6M1"] = {
         ["rawcode"] = "E6M1",
@@ -687,6 +739,8 @@ return {
         ["sides1"] = 8,
         ["dmgplus1"] = 154,
         ["acquire"] = 900,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["B6M1"] = {
         ["rawcode"] = "B6M1",
@@ -711,6 +765,8 @@ return {
         ["dmgplus1"] = 279,
         ["acquire"] = 900,
         ["hero"] = 0,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["N7M1"] = {
         ["rawcode"] = "N7M1",
@@ -733,6 +789,8 @@ return {
         ["sides1"] = 5,
         ["dmgplus1"] = 47,
         ["acquire"] = 900,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["N7R1"] = {
         ["rawcode"] = "N7R1",
@@ -755,6 +813,8 @@ return {
         ["sides1"] = 5,
         ["dmgplus1"] = 38,
         ["acquire"] = 900,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["E7M1"] = {
         ["rawcode"] = "E7M1",
@@ -777,6 +837,8 @@ return {
         ["sides1"] = 8,
         ["dmgplus1"] = 174,
         ["acquire"] = 900,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["B7M1"] = {
         ["rawcode"] = "B7M1",
@@ -801,6 +863,8 @@ return {
         ["dmgplus1"] = 319,
         ["acquire"] = 900,
         ["hero"] = 0,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["N8M1"] = {
         ["rawcode"] = "N8M1",
@@ -823,6 +887,8 @@ return {
         ["sides1"] = 5,
         ["dmgplus1"] = 52,
         ["acquire"] = 900,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["N8R1"] = {
         ["rawcode"] = "N8R1",
@@ -845,6 +911,8 @@ return {
         ["sides1"] = 5,
         ["dmgplus1"] = 42,
         ["acquire"] = 900,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["E8M1"] = {
         ["rawcode"] = "E8M1",
@@ -867,6 +935,8 @@ return {
         ["sides1"] = 8,
         ["dmgplus1"] = 194,
         ["acquire"] = 900,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["B8M1"] = {
         ["rawcode"] = "B8M1",
@@ -891,6 +961,8 @@ return {
         ["dmgplus1"] = 359,
         ["acquire"] = 900,
         ["hero"] = 0,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["N9M1"] = {
         ["rawcode"] = "N9M1",
@@ -913,6 +985,8 @@ return {
         ["sides1"] = 5,
         ["dmgplus1"] = 57,
         ["acquire"] = 900,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["N9R1"] = {
         ["rawcode"] = "N9R1",
@@ -935,6 +1009,8 @@ return {
         ["sides1"] = 5,
         ["dmgplus1"] = 46,
         ["acquire"] = 900,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["E9M1"] = {
         ["rawcode"] = "E9M1",
@@ -957,6 +1033,8 @@ return {
         ["sides1"] = 8,
         ["dmgplus1"] = 214,
         ["acquire"] = 900,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["B9M1"] = {
         ["rawcode"] = "B9M1",
@@ -981,6 +1059,8 @@ return {
         ["dmgplus1"] = 399,
         ["acquire"] = 900,
         ["hero"] = 0,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
     ["S0M1"] = {
         ["rawcode"] = "S0M1",
@@ -1019,5 +1099,7 @@ return {
         ["goldRep"] = 0,
         ["points"] = 0,
         ["dropItems"] = 0,
+        ["atktype1"] = "hero",
+        ["defType"] = "hero",
     },
 }

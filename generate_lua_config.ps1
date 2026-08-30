@@ -1459,6 +1459,43 @@ function New-BossAffixData {
     }
 }
 
+function Apply-CombatUnitTypeOverrides {
+    param([Parameter(Mandatory = $true)][object]$UnitTable)
+
+    # 项目统一使用英雄攻击/英雄护甲，避免原生普通、穿刺、攻城与轻/中/重甲克制表改变数值平衡。
+    # 注意：atktype1 才是攻击类型；weapTp1 是武器表现类型，不能写成 hero。
+    # S0M1 等商店单位不属于战斗单位，保留其模板类型；u0W1 是战斗召唤物，纳入统一规则。
+    foreach ($rawcode in $UnitTable.Sections.Keys) {
+        $isCombatUnit = (
+            $rawcode -eq 'u0W1' -or
+            $rawcode -match '^H[0-9A-Z]{3}$' -or
+            $rawcode -match '^[NEB][0-9A-Z]{3}$'
+        )
+        if (-not $isCombatUnit) { continue }
+        $UnitTable.Sections[$rawcode]['atktype1'] = 'hero'
+        $UnitTable.Sections[$rawcode]['defType'] = 'hero'
+    }
+}
+
+function Assert-CombatUnitTypes {
+    param([Parameter(Mandatory = $true)][System.Collections.IDictionary]$Units)
+
+    foreach ($rawcode in $Units.Keys) {
+        $isCombatUnit = (
+            $rawcode -eq 'u0W1' -or
+            $rawcode -match '^H[0-9A-Z]{3}$' -or
+            $rawcode -match '^[NEB][0-9A-Z]{3}$'
+        )
+        if (-not $isCombatUnit) { continue }
+        if (-not $Units[$rawcode].Contains('atktype1') -or
+            -not $Units[$rawcode].Contains('defType') -or
+            [string]$Units[$rawcode]['atktype1'] -ne 'hero' -or
+            [string]$Units[$rawcode]['defType'] -ne 'hero') {
+            throw "战斗单位攻击/护甲类型必须为 hero：$rawcode"
+        }
+    }
+}
+
 function Apply-RoguelikeObjectOverrides {
     param(
         [Parameter(Mandatory = $true)][object]$UnitTable,
@@ -1908,6 +1945,8 @@ try {
     $equipmentDropTable = Read-ExcelObjectTable $equipmentPath 'drop' 'dropId'
 
     Apply-RoguelikeObjectOverrides $unitTable $abilityTable
+    # 肉鸽覆盖会追加 u0W1 召唤物，因此必须在所有单位覆盖完成后统一写入战斗类型。
+    Apply-CombatUnitTypeOverrides $unitTable
     Validate-MonsterExperience $unitTable.Sections
 
     # slotType 是旧版“装备部位”字段。Warcraft 原生物品栏没有部位限制，
@@ -1924,6 +1963,7 @@ try {
 
     $mysteryShopData = New-MysteryShopConfig $mysteryShopLocationsTable $mysteryShopStockTable $unitTable.Sections $itemTable.Sections
     $units = ConvertTo-ObjectConfig $unitTable.Sections
+    Assert-CombatUnitTypes $units
     foreach ($rawcode in @($units.Keys)) {
         $unit = $units[$rawcode]
         if (-not $unit.Contains('Primary')) { continue }
