@@ -46,8 +46,8 @@
 ---@field levelMin integer 最低等级
 ---@field levelMax integer 最高等级
 ---@class EquipmentStatAbilityConfig
----@field healthDecrease string[] 生命减少个位/十位/百位/千位技能 Rawcode
----@field healthIncrease string[] 生命增加个位/十位/百位/千位技能 Rawcode
+---@field healthDecrease string[] 生命减少个位/十位/百位/千位/万位/十万位/百万位技能 Rawcode
+---@field healthIncrease string[] 生命增加个位/十位/百位/千位/万位/十万位/百万位技能 Rawcode
 ---@field attack string[] 攻击个位/十位/百位/千位技能 Rawcode
 ---@field attackDecrease string[] 攻击减少个位/十位/百位/千位技能 Rawcode
 ---@field armor string[] 护甲十分位/个位/十位/百位技能 Rawcode
@@ -1117,16 +1117,22 @@ return {
     },
     ["statAbilities"] = {
         ["healthDecrease"] = {
-            "EH00",
-            "EH01",
-            "EH02",
-            "EH03",
-        },
-        ["healthIncrease"] = {
             "EHN0",
             "EHN1",
             "EHN2",
             "EHN3",
+            "EHN4",
+            "EHN5",
+            "EHN6",
+        },
+        ["healthIncrease"] = {
+            "EH00",
+            "EH01",
+            "EH02",
+            "EH03",
+            "EH04",
+            "EH05",
+            "EH06",
         },
         ["attack"] = {
             "ED00",

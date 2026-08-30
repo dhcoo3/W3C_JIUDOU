@@ -196,7 +196,7 @@ function Get-XlsxMappedCellValue {
 function ConvertFrom-ExcelScalar {
     param(
         [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text,
-        [Parameter(Mandatory = $true)][ValidateSet('string', 'int', 'bool')][string]$Type,
+        [Parameter(Mandatory = $true)][ValidateSet('string', 'int', 'real', 'bool')][string]$Type,
         [Parameter(Mandatory = $true)][string]$Context
     )
 
@@ -225,7 +225,15 @@ function ConvertFrom-ExcelScalar {
         return $integer
     }
 
-    throw "$Context 使用了已禁用的浮点字段类型：$Type"
+    if ($Type -eq 'real') {
+        $real = 0.0
+        if ((-not [double]::TryParse($trimmed, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$real)) -or ([double]::IsNaN($real)) -or ([double]::IsInfinity($real))) {
+            throw "$Context 需要 real 值，实际为：$Text"
+        }
+        return $real
+    }
+
+    throw "$Context 使用了未知字段类型：$Type"
 }
 
 function ConvertFrom-ExcelTypedValue {

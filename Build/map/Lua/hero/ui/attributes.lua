@@ -13,6 +13,11 @@ local BACKDROP_TEMPLATE = "EscMenuControlBackdropTemplate"
 local TEXT_TEMPLATE = "EscMenuLabelTextTemplate"
 local TAB_KEY = 9
 local KEY_DOWN = 1
+local PROJECTION_LIMITS = {
+    hidden_attack = 9999,
+    hidden_health = 99999,
+    hidden_armor = 9999,
+}
 
 local next_frame_id = 0
 local active_hero = nil
@@ -71,6 +76,9 @@ local function format_value(definition, value)
         or definition.projection == "hero_intelligence" then
         return tostring(value)
     end
+    if definition.projection == "derived_attack_speed_percent" then
+        return tostring(math.max(1, value)) .. "%"
+    end
     if definition.displayFormat == "percent"
         or definition.projection == "derived_basic_attack_bonus_percent"
         or definition.projection == "derived_health_amplification_percent" then
@@ -92,8 +100,8 @@ end
 
 local function format_projection_limit(definition, value)
     local projection = definition.projection
-    if (projection == "hidden_attack" or projection == "hidden_health" or projection == "hidden_armor")
-        and math.abs(math.floor(tonumber(value) or 0)) >= 9999 then
+    local limit = PROJECTION_LIMITS[projection]
+    if limit ~= nil and math.abs(math.floor(tonumber(value) or 0)) >= limit then
         return " |cffff8080（投影已限制）|r"
     end
     return ""

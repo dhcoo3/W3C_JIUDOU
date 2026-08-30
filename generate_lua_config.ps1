@@ -707,7 +707,8 @@ function New-EquipmentStatAbilitySection {
         [Parameter(Mandatory = $true)][string]$Rawcode,
         [Parameter(Mandatory = $true)][string]$Parent,
         [Parameter(Mandatory = $true)][string]$Name,
-        [Parameter(Mandatory = $true)][object[]]$Values
+        [Parameter(Mandatory = $true)][object[]]$Values,
+        [bool]$ItemAbility = $true
     )
 
     if ($Values.Count -ne 10) {
@@ -717,7 +718,7 @@ function New-EquipmentStatAbilitySection {
         _parent = $Parent
         Name = $Name
         hero = 0
-        item = 1
+        item = if ($ItemAbility) { 1 } else { 0 }
         levels = 10
         levelSkip = 0
         DataA = $Values
@@ -744,10 +745,16 @@ function New-EquipmentStatAbilities {
     $tens = @(for ($index = 0; $index -lt 10; $index = $index + 1) { $index * 10 })
     $hundreds = @(for ($index = 0; $index -lt 10; $index = $index + 1) { $index * 100 })
     $thousands = @(for ($index = 0; $index -lt 10; $index = $index + 1) { $index * 1000 })
+    $tenThousands = @(for ($index = 0; $index -lt 10; $index = $index + 1) { $index * 10000 })
+    $hundredThousands = @(for ($index = 0; $index -lt 10; $index = $index + 1) { $index * 100000 })
+    $millions = @(for ($index = 0; $index -lt 10; $index = $index + 1) { $index * 1000000 })
     $negativeUnits = @(for ($index = 0; $index -lt 10; $index = $index + 1) { -$index })
     $negativeTens = @(for ($index = 0; $index -lt 10; $index = $index + 1) { -$index * 10 })
     $negativeHundreds = @(for ($index = 0; $index -lt 10; $index = $index + 1) { -$index * 100 })
     $negativeThousands = @(for ($index = 0; $index -lt 10; $index = $index + 1) { -$index * 1000 })
+    $negativeTenThousands = @(for ($index = 0; $index -lt 10; $index = $index + 1) { -$index * 10000 })
+    $negativeHundredThousands = @(for ($index = 0; $index -lt 10; $index = $index + 1) { -$index * 100000 })
+    $negativeMillions = @(for ($index = 0; $index -lt 10; $index = $index + 1) { -$index * 1000000 })
     $armorTenthUnits = New-ScaledDigitValues 0.1 $false
     $armorTenthTens = New-ScaledDigitValues 1.0 $false
     $armorTenthHundreds = New-ScaledDigitValues 10.0 $false
@@ -773,14 +780,21 @@ function New-EquipmentStatAbilities {
     $speedTenthNegativeHundreds = New-ScaledDigitValues 10.0 $true
     $speedTenthNegativeThousands = New-ScaledDigitValues 100.0 $true
     $definitions = @(
-        @{ Rawcode = 'EH00'; Parent = 'AIlf'; Name = '装备生命减少个位'; Values = $units },
-        @{ Rawcode = 'EH01'; Parent = 'AIlf'; Name = '装备生命减少十位'; Values = $tens },
-        @{ Rawcode = 'EH02'; Parent = 'AIlf'; Name = '装备生命减少百位'; Values = $hundreds },
-        @{ Rawcode = 'EH03'; Parent = 'AIlf'; Name = '装备生命减少千位'; Values = $thousands },
-        @{ Rawcode = 'EHN0'; Parent = 'AIlf'; Name = '装备生命增加个位'; Values = $negativeUnits },
-        @{ Rawcode = 'EHN1'; Parent = 'AIlf'; Name = '装备生命增加十位'; Values = $negativeTens },
-        @{ Rawcode = 'EHN2'; Parent = 'AIlf'; Name = '装备生命增加百位'; Values = $negativeHundreds },
-        @{ Rawcode = 'EHN3'; Parent = 'AIlf'; Name = '装备生命增加千位'; Values = $negativeThousands },
+        # AIlf 采用 UnitMaxState 兼容写法：临时添加反向生命值、设置等级、移除后写入目标差额。
+        @{ Rawcode = 'EH00'; Parent = 'AIlf'; Name = '英雄生命状态增加个位'; Values = $negativeUnits },
+        @{ Rawcode = 'EH01'; Parent = 'AIlf'; Name = '英雄生命状态增加十位'; Values = $negativeTens },
+        @{ Rawcode = 'EH02'; Parent = 'AIlf'; Name = '英雄生命状态增加百位'; Values = $negativeHundreds },
+        @{ Rawcode = 'EH03'; Parent = 'AIlf'; Name = '英雄生命状态增加千位'; Values = $negativeThousands },
+        @{ Rawcode = 'EH04'; Parent = 'AIlf'; Name = '英雄生命状态增加万位'; Values = $negativeTenThousands },
+        @{ Rawcode = 'EH05'; Parent = 'AIlf'; Name = '英雄生命状态增加十万位'; Values = $negativeHundredThousands },
+        @{ Rawcode = 'EH06'; Parent = 'AIlf'; Name = '英雄生命状态增加百万位'; Values = $negativeMillions },
+        @{ Rawcode = 'EHN0'; Parent = 'AIlf'; Name = '英雄生命状态减少个位'; Values = $units },
+        @{ Rawcode = 'EHN1'; Parent = 'AIlf'; Name = '英雄生命状态减少十位'; Values = $tens },
+        @{ Rawcode = 'EHN2'; Parent = 'AIlf'; Name = '英雄生命状态减少百位'; Values = $hundreds },
+        @{ Rawcode = 'EHN3'; Parent = 'AIlf'; Name = '英雄生命状态减少千位'; Values = $thousands },
+        @{ Rawcode = 'EHN4'; Parent = 'AIlf'; Name = '英雄生命状态减少万位'; Values = $tenThousands },
+        @{ Rawcode = 'EHN5'; Parent = 'AIlf'; Name = '英雄生命状态减少十万位'; Values = $hundredThousands },
+        @{ Rawcode = 'EHN6'; Parent = 'AIlf'; Name = '英雄生命状态减少百万位'; Values = $millions },
         @{ Rawcode = 'ED00'; Parent = 'AItg'; Name = '装备隐藏攻击个位'; Values = $units },
         @{ Rawcode = 'ED01'; Parent = 'AItg'; Name = '装备隐藏攻击十位'; Values = $tens },
         @{ Rawcode = 'ED02'; Parent = 'AItg'; Name = '装备隐藏攻击百位'; Values = $hundreds },
@@ -834,13 +848,14 @@ function New-EquipmentStatAbilities {
         if ($ExistingAbilities.Contains($definition.Rawcode)) {
             throw "装备隐藏属性技能 Rawcode 冲突：$($definition.Rawcode)"
         }
-        $abilitySections[$definition.Rawcode] = New-EquipmentStatAbilitySection $definition.Rawcode $definition.Parent $definition.Name $definition.Values
+        $itemAbility = if ($definition.ContainsKey('ItemAbility')) { [bool]$definition.ItemAbility } else { $true }
+        $abilitySections[$definition.Rawcode] = New-EquipmentStatAbilitySection $definition.Rawcode $definition.Parent $definition.Name $definition.Values $itemAbility
     }
     return [pscustomobject]@{
         abilitySections = $abilitySections
         luaData = [ordered]@{
-            healthDecrease = @('EH00', 'EH01', 'EH02', 'EH03')
-            healthIncrease = @('EHN0', 'EHN1', 'EHN2', 'EHN3')
+            healthDecrease = @('EHN0', 'EHN1', 'EHN2', 'EHN3', 'EHN4', 'EHN5', 'EHN6')
+            healthIncrease = @('EH00', 'EH01', 'EH02', 'EH03', 'EH04', 'EH05', 'EH06')
             attack = @('ED00', 'ED01', 'ED02', 'ED03')
             attackDecrease = @('EDN0', 'EDN1', 'EDN2', 'EDN3')
             armor = @('EA00', 'EA01', 'EA02', 'EA03')
@@ -1781,10 +1796,14 @@ function New-AttributeConfig {
         health = 'hidden_health'
         armor = 'hidden_armor'
         moveSpeed = 'native_move_speed'
+        attack_speed_percent = 'derived_attack_speed_percent'
         basic_attack_bonus_percent = 'derived_basic_attack_bonus_percent'
         health_amplification_percent = 'derived_health_amplification_percent'
     }
     $defaults = [ordered]@{
+        attack_speed_percent = [ordered]@{
+            displayOrder = 125; displayFormat = 'percent'; projection = 'derived_attack_speed_percent'; group = '战斗属性'; name = '攻击速度'
+        }
         basic_attack_bonus_percent = [ordered]@{
             displayOrder = 135; displayFormat = 'percent'; projection = 'derived_basic_attack_bonus_percent'; group = '战斗属性'; name = '普攻加成'
         }
@@ -1905,6 +1924,36 @@ try {
 
     $mysteryShopData = New-MysteryShopConfig $mysteryShopLocationsTable $mysteryShopStockTable $unitTable.Sections $itemTable.Sections
     $units = ConvertTo-ObjectConfig $unitTable.Sections
+    foreach ($rawcode in @($units.Keys)) {
+        $unit = $units[$rawcode]
+        if (-not $unit.Contains('Primary')) { continue }
+        if (-not $unit.Contains('initialAttackSpeedPercent')) {
+            throw "英雄缺少初始攻速配置：$rawcode.initialAttackSpeedPercent"
+        }
+        $initialAttackSpeedPercent = [int]$unit.initialAttackSpeedPercent
+        if ($initialAttackSpeedPercent -lt 1 -or $initialAttackSpeedPercent -gt 999) {
+            throw "英雄初始攻速必须在 1~999%：$rawcode.initialAttackSpeedPercent"
+        }
+        foreach ($field in @('dmgpt1', 'backsw1')) {
+            if (-not $unit.Contains($field)) {
+                throw "英雄缺少攻击动作配置：$rawcode.$field"
+            }
+            $value = [double]$unit[$field]
+        if (([double]::IsNaN($value)) -or ([double]::IsInfinity($value)) -or $value -lt 0) {
+                throw "英雄攻击动作必须为非负实数：$rawcode.$field"
+            }
+        }
+        $cooldown = [double]$unit.cool1
+        $attackPoint = [double]$unit.dmgpt1
+        $backswing = [double]$unit.backsw1
+        if ($cooldown -le 0 -or ($attackPoint + $backswing) -gt $cooldown) {
+            throw "英雄攻击前摇和后摇之和不得大于攻击间隔：$rawcode"
+        }
+    }
+    # 初始攻速是项目运行时配置，不属于 Warcraft 单位物编字段。
+    foreach ($rawcode in @($unitTable.Sections.Keys)) {
+        [void]$unitTable.Sections[$rawcode].Remove('initialAttackSpeedPercent')
+    }
     $items = ConvertTo-ObjectConfig $itemTable.Sections
     $profiles = New-MonsterDifficultyProfiles $scalingTable.Rows
     $experienceData = New-ExperienceConfig $experienceSettingsTable $experienceLevelTable
@@ -1969,7 +2018,7 @@ try {
         $lniDefinitions += @{ Name = 'roguelike.ini'; Data = $roguelikeData.lni }
     }
     $luaDefinitions = @(
-        @{ Name = 'units.lua'; Annotations = @('---@class GeneratedUnitConfig', '---@field rawcode string 单位 Rawcode', '---@field _parent string|nil 原始单位模板', '---@field Name string|nil 单位名称', '---@field Ubertip string|nil 单位说明', '---@field heroAbilList string|nil 英雄技能 Rawcode 列表', '---@field expReward integer|nil 单位死亡产生的基础经验'); Data = $units },
+        @{ Name = 'units.lua'; Annotations = @('---@class GeneratedUnitConfig', '---@field rawcode string 单位 Rawcode', '---@field _parent string|nil 原始单位模板', '---@field Name string|nil 单位名称', '---@field Ubertip string|nil 单位说明', '---@field heroAbilList string|nil 英雄技能 Rawcode 列表', '---@field cool1 number|nil 基础攻击间隔（秒）', '---@field dmgpt1 number|nil 攻击前摇（秒）；英雄由 unit.xlsx 配置并写入物编', '---@field backsw1 number|nil 攻击后摇（秒）；英雄由 unit.xlsx 配置并写入物编', '---@field initialAttackSpeedPercent integer|nil 英雄初始总攻速百分比；100%=标准，500%=5 倍；改表后须重新生成地图并重新开局', '---@field expReward integer|nil 单位死亡产生的基础经验'); Data = $units },
         @{ Name = 'abilities.lua'; Annotations = @('---@class GeneratedAbilityConfig', '---@field rawcode string 技能 Rawcode', '---@field _parent string|nil 原始技能模板', '---@field Name string|nil 技能名称', '---@field Ubertip string|nil 技能说明', '---@field Cool integer|integer[]|nil 冷却时间', '---@field Rng integer|integer[]|nil 施法距离', '---@field Area integer|integer[]|nil 影响范围'); Data = $abilities },
         @{ Name = 'items.lua'; Annotations = @('---@class GeneratedItemConfig', '---@field rawcode string 道具 Rawcode', '---@field _parent string|nil 原始道具模板', '---@field Name string|nil 道具名称', '---@field Ubertip string|nil 道具说明'); Data = $items },
         @{ Name = 'buffs.lua'; Annotations = @('---@class GeneratedBuffConfig', '---@field rawcode string Buff Rawcode', '---@field _parent string|nil 原始 Buff 模板', '---@field Bufftip string|nil Buff 名称', '---@field Buffubertip string|nil Buff 说明'); Data = $buffs },
@@ -2026,8 +2075,8 @@ try {
             '---@field levelMin integer 最低等级',
             '---@field levelMax integer 最高等级',
             '---@class EquipmentStatAbilityConfig',
-            '---@field healthDecrease string[] 生命减少个位/十位/百位/千位技能 Rawcode',
-            '---@field healthIncrease string[] 生命增加个位/十位/百位/千位技能 Rawcode',
+            '---@field healthDecrease string[] 生命减少个位/十位/百位/千位/万位/十万位/百万位技能 Rawcode',
+            '---@field healthIncrease string[] 生命增加个位/十位/百位/千位/万位/十万位/百万位技能 Rawcode',
             '---@field attack string[] 攻击个位/十位/百位/千位技能 Rawcode',
             '---@field attackDecrease string[] 攻击减少个位/十位/百位/千位技能 Rawcode',
             '---@field armor string[] 护甲十分位/个位/十位/百位技能 Rawcode',

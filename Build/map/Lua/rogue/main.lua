@@ -398,4 +398,78 @@ function module.debug_timeout(player_id)
     return true
 end
 
+local function format_levels(group)
+    local entries = {}
+    for index, rawcode in ipairs(group.rawcodes or {}) do
+        table.insert(entries, string.format(
+            "%s=%d/%d",
+            tostring(rawcode),
+            math.floor(tonumber(group.actualLevels and group.actualLevels[index]) or 0),
+            math.floor(tonumber(group.expectedLevels and group.expectedLevels[index]) or 0)
+        ))
+    end
+    return table.concat(entries, ",")
+end
+
+--- 输出本地玩家英雄的攻速配置和隐藏 AIsx 等级；不修改任何同步状态。
+function module.debug_attack_speed(player_id)
+    if not is_integer(player_id) then return false end
+    local state = state_store.get_by_player_id(player_id)
+    if state == nil or state.hero == nil then
+        print("攻速调试失败：未找到玩家英雄，player=" .. tostring(player_id))
+        return false
+    end
+    local debug = hero_stats.get_attack_speed_debug(state.hero)
+    if debug == nil then
+        print("攻速调试失败：英雄尚未注册统一属性系统")
+        return false
+    end
+    print(string.format(
+        "攻速调试：hero=%s, cool1=%.3f, 配置=%d%%, 来源=%+d%%, 目标=%d%%, 预期间隔=%.3fs, 敏捷=%d, 原生敏捷=%+.1f%%, 隐藏投影=%+.1f%%",
+        tostring(debug.heroRawcode or "unknown"),
+        debug.baseAttackCooldown,
+        debug.configuredPercent,
+        debug.sourceBonusPercent,
+        debug.targetPercent,
+        debug.expectedAttackIntervalSeconds,
+        debug.agility,
+        debug.nativeAgilityBonusTenth / 10,
+        debug.desiredProjectionTenth / 10
+    ))
+    print("攻速调试 AIsx 正向(实际/期望)：" .. format_levels(debug.positive))
+    print("攻速调试 AIsx 负向(实际/期望)：" .. format_levels(debug.negative))
+    return true
+end
+
+--- 输出本地玩家英雄的生命公式、AIlf 投影和实际生命；不修改任何同步状态。
+function module.debug_health(player_id)
+    if not is_integer(player_id) then return false end
+    local state = state_store.get_by_player_id(player_id)
+    if state == nil or state.hero == nil then
+        print("生命调试失败：未找到玩家英雄，player=" .. tostring(player_id))
+        return false
+    end
+    local debug = hero_stats.get_health_debug(state.hero)
+    if debug == nil then
+        print("生命调试失败：英雄尚未注册统一属性系统")
+        return false
+    end
+    print(string.format(
+        "生命调试：基础=%d, 力量=%d, 固定=%+d, 增幅=%+d%%, 公式=%d, 已投影=%+d, 待写入=%+d, 上限=%d, 实际=%d/%d",
+        debug.baseLife,
+        debug.strength,
+        debug.fixedHealth,
+        debug.amplificationPercent,
+        debug.desiredLife,
+        debug.appliedProjection,
+        debug.pendingDelta,
+        debug.projectionMaximum,
+        debug.currentLife,
+        debug.maximumLife
+    ))
+    print("生命调试 AIlf 增加(临时技能，移除后应为 0)：" .. format_levels(debug.positive))
+    print("生命调试 AIlf 减少(临时技能，移除后应为 0)：" .. format_levels(debug.negative))
+    return true
+end
+
 return module

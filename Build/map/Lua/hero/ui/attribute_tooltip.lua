@@ -1,6 +1,6 @@
 --- 英雄三维属性合并 Tooltip。
---- 优先替换原生属性区的 Tooltip；不支持直接替换时回退到整体区域悬停覆盖。
---- 所有显示操作均为本地界面操作，不修改同步游戏状态。
+--- 负责接管原生英雄属性信息区的旧提示，并把三项属性的项目规则显示在同一个 Tips 中。
+--- 运行时只在本地玩家界面执行；属性数值仍由 hero.stats 统一计算。
 local jass = require "jass.common"
 local frame = require "platform.frame"
 local hero_stats = require "hero.stats"
@@ -12,11 +12,20 @@ local TEXT_TEMPLATE = "EscMenuLabelTextTemplate"
 local HERO_INFO_CONTEXT = 6
 local RETRY_INTERVAL = 0.5
 local MAX_INSTALL_ATTEMPTS = 20
+local HOVER_POLL_INTERVAL = 0.05
 
 local ATTRIBUTE_NAMES = {
     strength = "力量",
     agility = "敏捷",
     intelligence = "智力",
+}
+
+-- 1.27 的英雄属性信息区由一个容器、一个主属性图标和三组文字组成。
+-- SimpleInfoPanelIconHero 是整体容器，后续名称用于兼容不同 KKWE 客户端暴露的控件层级。
+local HERO_INFO_FRAME_NAMES = {
+    "SimpleInfoPanelIconHero",
+    "SimpleInfoPanelIconHeroText",
+    "InfoPanelIconHeroIcon",
 }
 
 local ATTRIBUTE_FRAME_NAMES = {
@@ -28,9 +37,10 @@ local ATTRIBUTE_FRAME_NAMES = {
     "InfoPanelIconHeroIntellectValue",
 }
 
-local HERO_INFO_FRAME_NAMES = {
-    "SimpleInfoPanelIconHeroText",
-    "InfoPanelIconHeroIcon",
+local ATTRIBUTE_VALUE_NAMES = {
+    strength = "InfoPanelIconHeroStrengthValue",
+    agility = "InfoPanelIconHeroAgilityValue",
+    intelligence = "InfoPanelIconHeroIntellectValue",
 }
 
 local active_hero = nil
@@ -41,12 +51,14 @@ local fallback_visible = false
 local native_tooltip_hidden = false
 local frame_id = 0
 local hooked_frames = {}
-local direct_targets = {}
+local target_frames = {}
 local install_timer = nil
+local hover_timer = nil
 local install_attempts = 0
 local started = false
 local installed = false
 local warned = false
+local logged_target_count = 0
 
 local function get_local_player_id()
     if type(jass.GetLocalPlayer) ~= "function" or type(jass.GetPlayerId) ~= "function" then
@@ -88,7 +100,9 @@ local function is_primary(attribute_id)
         and hero_stats.get_primary_attribute(active_hero) == attribute_id
 end
 
-local function build_description()
+--- 生成单个合并属性 Tips；只在当前主属性下显示“主要属性”。
+---@return string description 项目当前三维属性说明
+function module.build_description()
     local lines = {"英雄属性：", ""}
     for _, attribute_id in ipairs({"strength", "agility", "intelligence"}) do
         table.insert(lines, ATTRIBUTE_NAMES[attribute_id] .. "：")
@@ -100,8 +114,7 @@ local function build_description()
             table.insert(lines, "- 每10点增加1%生命增幅")
         elseif attribute_id == "agility" then
             table.insert(lines, "- 每10点增加1%普攻加成")
-            table.insert(lines, "- 每10点增加1点护甲")
-        elseif attribute_id == "intelligence" then
+        else
             table.insert(lines, "- 每10点增加1%技能伤害")
         end
         table.insert(lines, "- 作为主属性时，每点增加2点攻击力")
@@ -129,13 +142,13 @@ local function ensure_frames()
         return false
     end
 
+    -- 使用与装备 Tooltip 相同的稳定模板组合。不要创建空模板 SIMPLEFRAME：
+    -- 部分 1.27 KKWE 会在该组合上直接抛出 JASS 调用异常。
     tooltip_root = create_frame("BACKDROP", "Root", game_ui, BACKDROP_TEMPLATE)
-    if tooltip_root == nil then
-        return false
-    end
-    -- 文字作为 Tooltip 根节点的子节点，直接设置根节点为 Tooltip 时会一起移动和显示。
-    tooltip_text = create_frame("TEXT", "Text", tooltip_root, TEXT_TEMPLATE)
-    if tooltip_text == nil then
+    tooltip_text = create_frame("TEXT", "Text", game_ui, TEXT_TEMPLATE)
+    if tooltip_root == nil or tooltip_text == nil then
+        tooltip_root = nil
+        tooltip_text = nil
         return false
     end
     frame.set_point(tooltip_text, frame.POINT_CENTER, tooltip_root, frame.POINT_CENTER, 0.0, 0.0)
@@ -144,16 +157,42 @@ local function ensure_frames()
     return true
 end
 
+local function update_native_attribute_values()
+    if active_hero == nil then
+        return
+    end
+    local snapshot = hero_stats.get_snapshot(active_hero)
+    local value_count = 0
+    for attribute_id, name in pairs(ATTRIBUTE_VALUE_NAMES) do
+        local value_frame = frame.find_by_name(name, HERO_INFO_CONTEXT)
+        if value_frame ~= nil then
+            frame.set_visible(value_frame, true)
+            frame.set_text(value_frame, tostring(math.floor(tonumber(snapshot[attribute_id]) or 0)))
+            value_count = value_count + 1
+        end
+    end
+
+    -- 某些 1.27 客户端会把三项文字容器误判为不可见，只留下主属性图标。
+    -- 找到至少两项数值时恢复这个原生容器；不创建新的属性面板，也不改变原生布局。
+    if value_count >= 2 then
+        local attribute_text = frame.find_by_name("SimpleInfoPanelIconHeroText", HERO_INFO_CONTEXT)
+        if attribute_text ~= nil then
+            frame.set_visible(attribute_text, true)
+        end
+    end
+end
+
 local function update_text()
     if not ensure_frames() then
         return false
     end
-    local text = build_description()
+    local text = module.build_description()
     local line_count = count_lines(text)
     local height = math.min(0.48, 0.040 + line_count * 0.020)
     frame.set_size(tooltip_root, 0.47, height)
     frame.set_size(tooltip_text, 0.43, math.max(0.02, height - 0.018))
     frame.set_text(tooltip_text, text)
+    update_native_attribute_values()
     return true
 end
 
@@ -211,70 +250,73 @@ local function bind_fallback(target)
     return true
 end
 
-local function install_direct_targets()
+local function add_target(target)
+    if target == nil or target_frames[target] then
+        return false
+    end
+    target_frames[target] = true
+    bind_fallback(target)
+    return true
+end
+
+local function install_targets()
     if not update_text() then
         return 0
     end
-    local count = 0
+    local found_count = 0
     for _, name in ipairs(HERO_INFO_FRAME_NAMES) do
         local target = frame.find_by_name(name, HERO_INFO_CONTEXT)
-        if target ~= nil and not direct_targets[target] and frame.set_tooltip(target, tooltip_root) then
-            direct_targets[target] = true
-            count = count + 1
-        elseif target ~= nil and direct_targets[target] then
-            count = count + 1
+        if target ~= nil then
+            add_target(target)
+            found_count = found_count + 1
         end
     end
     for _, name in ipairs(ATTRIBUTE_FRAME_NAMES) do
         local target = frame.find_by_name(name, HERO_INFO_CONTEXT)
-        if target ~= nil and not direct_targets[target] and frame.set_tooltip(target, tooltip_root) then
-            direct_targets[target] = true
-            count = count + 1
-        elseif target ~= nil and direct_targets[target] then
-            count = count + 1
+        if target ~= nil then
+            add_target(target)
+            found_count = found_count + 1
         end
     end
-    return count
+    return found_count
 end
 
-local function install_fallback_targets()
-    local count = 0
-    for _, name in ipairs(HERO_INFO_FRAME_NAMES) do
-        local target = frame.find_by_name(name, HERO_INFO_CONTEXT)
-        if target ~= nil and bind_fallback(target) then
-            count = count + 1
-        elseif target ~= nil and hooked_frames[target] then
-            count = count + 1
-        end
+local function poll_hover()
+    if not installed then
+        return
     end
-    if count == 0 then
-        for _, name in ipairs(ATTRIBUTE_FRAME_NAMES) do
-            local target = frame.find_by_name(name, HERO_INFO_CONTEXT)
-            if target ~= nil and bind_fallback(target) then
-                count = count + 1
-            elseif target ~= nil and hooked_frames[target] then
-                count = count + 1
-            end
+    local focus = frame.get_mouse_focus()
+    if focus ~= nil and target_frames[focus] then
+        if not fallback_visible then
+            show_fallback()
         end
+    elseif fallback_visible then
+        hide_fallback()
     end
-    return count
+end
+
+local function start_hover_timer()
+    if hover_timer ~= nil
+        or type(jass.CreateTimer) ~= "function"
+        or type(jass.TimerStart) ~= "function" then
+        return
+    end
+    hover_timer = jass.CreateTimer()
+    jass.TimerStart(hover_timer, HOVER_POLL_INTERVAL, true, poll_hover)
 end
 
 local function install_hooks()
     if not frame.is_available() then
         return false
     end
-    local direct_count = install_direct_targets()
-    if direct_count > 0 then
+    local found_count = install_targets()
+    if found_count > 0 then
         installed = true
-        print(string.format("英雄属性合并 Tooltip 已接管：直接 Tooltip=%d", direct_count))
-        return true
-    end
-
-    local fallback_count = install_fallback_targets()
-    if fallback_count > 0 then
-        installed = true
-        print(string.format("英雄属性合并 Tooltip 已接管：悬停区域=%d", fallback_count))
+        start_hover_timer()
+        if logged_target_count ~= found_count then
+            logged_target_count = found_count
+            print(string.format("英雄属性合并 Tooltip 已绑定：目标=%d", found_count))
+        end
         return true
     end
     return false
@@ -297,17 +339,16 @@ local function schedule_install()
     install_timer = jass.CreateTimer()
     jass.TimerStart(install_timer, RETRY_INTERVAL, true, function()
         install_attempts = install_attempts + 1
-        if install_hooks() or install_attempts >= MAX_INSTALL_ATTEMPTS then
-            if not installed then
-                print("英雄属性 Tooltip 接入失败：未找到可用的英雄属性信息区")
-            end
+        install_hooks()
+        if install_attempts >= MAX_INSTALL_ATTEMPTS then
+            if not installed then print("英雄属性 Tooltip 接入失败：未找到可用的英雄属性信息区") end
             stop_install_timer()
         end
     end)
 end
 
 --- 启动英雄属性合并 Tooltip。
----@param hero_results HeroSelectionResult[]
+---@param hero_results HeroSelectionResult[] 已创建的英雄结果
 ---@return boolean started_now 是否已启动或已安排启动
 function module.start(hero_results)
     if started then
@@ -336,12 +377,14 @@ function module.start(hero_results)
             end
         end
     end)
-    if not install_hooks() then
-        schedule_install()
-    end
+    install_hooks()
+    -- 原生属性子控件可能在英雄面板首次刷新后才出现，成功绑定整体容器后仍保留短时重试。
+    schedule_install()
     return true
 end
 
+--- 手动隐藏当前自定义属性 Tips。
+---@return nil
 function module.hide()
     hide_fallback()
 end

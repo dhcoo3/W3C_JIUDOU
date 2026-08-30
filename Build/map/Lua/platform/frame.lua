@@ -91,7 +91,20 @@ function module.create(frame_type, name, parent, template, frame_id)
         return nil
     end
 
-    return japi.DzCreateFrameByTagName(frame_type, name, parent, template, frame_id)
+    -- 部分 KKWE 版本会把无效模板组合报告为 Lua/JASS 异常；本地 Tooltip
+    -- 必须安全降级到原生界面，不能中断整张地图的运行时初始化。
+    local ok, created = pcall(
+        japi.DzCreateFrameByTagName,
+        frame_type,
+        name,
+        parent,
+        template or "",
+        frame_id or 0
+    )
+    if not ok or created == nil or created == 0 then
+        return nil
+    end
+    return created
 end
 
 --- 按 Warcraft 原生 Frame 名称查找界面节点。
@@ -178,6 +191,20 @@ function module.set_tooltip(target, tooltip)
         return false
     end
     return pcall(japi.DzFrameSetTooltip, target, tooltip)
+end
+
+--- 获取当前鼠标命中的本地 Frame。
+--- 1.27 的原生 UI 没有 BlzFrameGetMouseFocus，KKAPI 通过 DzGetMouseFocus 提供同等能力。
+---@return frame|nil target 当前鼠标命中的 Frame；接口缺失或没有命中时为空
+function module.get_mouse_focus()
+    if type(japi) ~= "table" or type(japi.DzGetMouseFocus) ~= "function" then
+        return nil
+    end
+    local ok, target = pcall(japi.DzGetMouseFocus)
+    if not ok or target == nil or target == 0 then
+        return nil
+    end
+    return target
 end
 
 --- 设置节点相对锚点位置。

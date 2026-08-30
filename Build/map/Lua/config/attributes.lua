@@ -66,6 +66,14 @@ return {
             ["displayFormat"] = "integer",
             ["projection"] = "native_move_speed",
         },
+        ["attack_speed_percent"] = {
+            ["attributeId"] = "attack_speed_percent",
+            ["group"] = "战斗属性",
+            ["name"] = "攻击速度",
+            ["displayOrder"] = 125,
+            ["displayFormat"] = "percent",
+            ["projection"] = "derived_attack_speed_percent",
+        },
         ["basic_attack_bonus_percent"] = {
             ["attributeId"] = "basic_attack_bonus_percent",
             ["group"] = "战斗属性",
