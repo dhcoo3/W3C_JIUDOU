@@ -10,6 +10,7 @@ local merge = require "equipment.merge"
 local stats = require "equipment.stats"
 local auto_skill = require "equipment.auto_skill"
 local tooltip = require "equipment.tooltip"
+local courier = require "courier.main"
 
 local module = {}
 local started = false
@@ -66,6 +67,9 @@ local function route_sync_message(message, sender_id)
         drop.handle_result(parts)
     elseif parts[1] == "MERGE_REQUEST" or parts[1] == "MERGE_RESULT" then
         merge.handle_sync(parts, sender_id)
+    elseif parts[1] == "BIRD_FUSION_BEGIN" or parts[1] == "BIRD_FUSION_MATERIALS"
+        or parts[1] == "BIRD_FUSION_OUTPUT" or parts[1] == "BIRD_FUSION_END" then
+        courier.handle_sync(parts, sender_id)
     end
 end
 
@@ -96,6 +100,7 @@ function module.start(hero_results, session_seed)
     drop.set_host_checker(sync.is_host)
     pickup.start(hero_results, fallback_allowed, on_changed)
     tooltip.start()
+    courier.start(hero_results, sync, critical_enabled, fallback_allowed)
     if not critical_enabled then
         drop.start(sync.broadcast, false)
         merge.start(hero_results, sync, false, on_changed, on_failure)

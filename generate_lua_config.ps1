@@ -141,6 +141,9 @@ function ConvertTo-LuaValue {
             if ([double]::IsNaN($numericValue) -or [double]::IsInfinity($numericValue)) {
                 throw "Lua 配置输出不接受非有限数字：$Value"
             }
+            if ($numericValue -eq 0) {
+                return '0'
+            }
             return $Value.ToString('0.############################', [System.Globalization.CultureInfo]::InvariantCulture)
         }
         return $Value.ToString($null, [System.Globalization.CultureInfo]::InvariantCulture)
