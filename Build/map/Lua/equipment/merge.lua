@@ -17,6 +17,8 @@ local processed_results = {}
 local key_trigger = nil
 local MERGE_KEY_F2 = 113
 local KEY_DOWN = 1
+local MERGE_SOURCE_HERO = "H"
+local MERGE_SOURCE_COURIER = "C"
 
 local function rawcode_to_id(rawcode)
     local a, b, c, d = string.byte(rawcode or "", 1, 4)
@@ -33,9 +35,23 @@ local function join_passives(passives)
     return table.concat(passives, ",")
 end
 
-local function encode_result(request_id, player_id, first_uid, second_uid, equipment)
+local function normalize_source(source)
+    if source == MERGE_SOURCE_HERO or source == MERGE_SOURCE_COURIER then
+        return source
+    end
+    return nil
+end
+
+local function get_merge_carrier(player_id, source)
+    if source == MERGE_SOURCE_COURIER then
+        return instance.get_inventory_proxy_by_player(player_id)
+    end
+    return instance.get_hero_by_player(player_id)
+end
+
+local function encode_result(request_id, player_id, source, first_uid, second_uid, equipment)
     return table.concat({
-        "MERGE_RESULT", "3", tostring(request_id), tostring(player_id), tostring(first_uid), tostring(second_uid),
+        "MERGE_RESULT", "4", tostring(request_id), tostring(player_id), source, tostring(first_uid), tostring(second_uid),
         tostring(equipment.uid), equipment.rawcode, equipment.templateId or "-", tostring(equipment.level),
         tostring(equipment.stats.attack), tostring(equipment.stats.health), tostring(equipment.stats.armor),
         tostring(equipment.stats.basicAttackBonusPercent or 0), tostring(equipment.stats.healthAmplificationPercent or 0),
@@ -113,14 +129,15 @@ local function add_result_to_slot(hero, equipment)
 end
 
 local function handle_request(parts, sender_id)
-    if #parts ~= 6 or not module.is_host() then
+    if #parts ~= 7 or parts[2] ~= "3" or not module.is_host() then
         return
     end
     local request_id = tonumber(parts[3])
     local player_id = tonumber(parts[4])
-    local first_uid = tonumber(parts[5])
-    local second_uid = tonumber(parts[6])
-    if request_id == nil or player_id == nil or first_uid == nil or second_uid == nil
+    local source = normalize_source(parts[5])
+    local first_uid = tonumber(parts[6])
+    local second_uid = tonumber(parts[7])
+    if request_id == nil or player_id == nil or source == nil or first_uid == nil or second_uid == nil
         or player_id < 0 or player_id > 15 or sender_id ~= nil and sender_id ~= player_id then
         return
     end
@@ -129,13 +146,13 @@ local function handle_request(parts, sender_id)
         return
     end
     processed_requests[request_key] = true
-    local hero = instance.get_hero_by_player(player_id)
-    if hero == nil then
-        report_failure(player_id, "找不到玩家英雄")
+    local carrier = get_merge_carrier(player_id, source)
+    if carrier == nil then
+        report_failure(player_id, "找不到合成来源物品栏")
         return
     end
-    local first_item = instance.get_item_in_slot(hero, 0)
-    local second_item = instance.get_item_in_slot(hero, 1)
+    local first_item = instance.get_item_in_slot(carrier, 0)
+    local second_item = instance.get_item_in_slot(carrier, 1)
     local first = first_item and instance.get_by_item(first_item) or nil
     local second = second_item and instance.get_by_item(second_item) or nil
     if first == nil or second == nil or first.uid ~= first_uid or second.uid ~= second_uid then
@@ -158,21 +175,22 @@ local function handle_request(parts, sender_id)
         report_failure(player_id, "合成结果生成失败")
         return
     end
-    local message = encode_result(request_id, player_id, first.uid, second.uid, result)
+    local message = encode_result(request_id, player_id, source, first.uid, second.uid, result)
     sync_module.broadcast(message)
 end
 
 local function handle_result(parts)
-    if #parts ~= 19 or parts[2] ~= "3" then
+    if #parts ~= 20 or parts[2] ~= "4" then
         return
     end
     local request_id = tonumber(parts[3])
     local player_id = tonumber(parts[4])
-    local first_uid = tonumber(parts[5])
-    local second_uid = tonumber(parts[6])
-    local uid = tonumber(parts[7])
-    local level = tonumber(parts[10])
-    if request_id == nil or player_id == nil or first_uid == nil or second_uid == nil or uid == nil or level == nil then
+    local source = normalize_source(parts[5])
+    local first_uid = tonumber(parts[6])
+    local second_uid = tonumber(parts[7])
+    local uid = tonumber(parts[8])
+    local level = tonumber(parts[11])
+    if request_id == nil or player_id == nil or source == nil or first_uid == nil or second_uid == nil or uid == nil or level == nil then
         return
     end
     local result_key = tostring(player_id) .. ":" .. tostring(request_id)
@@ -183,12 +201,12 @@ local function handle_result(parts)
     if instance.get_by_uid(uid) ~= nil then
         return
     end
-    local hero = instance.get_hero_by_player(player_id)
-    if hero == nil then
+    local carrier = get_merge_carrier(player_id, source)
+    if carrier == nil then
         return
     end
-    local first_item = instance.get_item_in_slot(hero, 0)
-    local second_item = instance.get_item_in_slot(hero, 1)
+    local first_item = instance.get_item_in_slot(carrier, 0)
+    local second_item = instance.get_item_in_slot(carrier, 1)
     local first = first_item and instance.get_by_item(first_item) or nil
     local second = second_item and instance.get_by_item(second_item) or nil
     if first == nil or second == nil or first.uid ~= first_uid or second.uid ~= second_uid then
@@ -196,39 +214,40 @@ local function handle_result(parts)
         return
     end
     local passive_ids = {}
-    if parts[17] ~= "-" and parts[17] ~= "" then
-        for passive_id in string.gmatch(parts[17], "[^,]+") do
+    if parts[18] ~= "-" and parts[18] ~= "" then
+        for passive_id in string.gmatch(parts[18], "[^,]+") do
             table.insert(passive_ids, passive_id)
         end
     end
     local result = instance.create({
         uid = uid,
-        rawcode = parts[8],
-        templateId = parts[9] == "-" and "" or parts[9],
+        rawcode = parts[9],
+        templateId = parts[10] == "-" and "" or parts[10],
         level = level,
         stats = {
-            attack = tonumber(parts[11]) or 0,
-            health = tonumber(parts[12]) or 0,
-            armor = tonumber(parts[13]) or 0,
-            basicAttackBonusPercent = tonumber(parts[14]) or 0,
-            healthAmplificationPercent = tonumber(parts[15]) or 0,
+            attack = tonumber(parts[12]) or 0,
+            health = tonumber(parts[13]) or 0,
+            armor = tonumber(parts[14]) or 0,
+            basicAttackBonusPercent = tonumber(parts[15]) or 0,
+            healthAmplificationPercent = tonumber(parts[16]) or 0,
         },
-        autoSkillId = parts[16] == "-" and nil or parts[16],
+        autoSkillId = parts[17] == "-" and nil or parts[17],
         passiveSkillIds = passive_ids,
-        comboSetId = parts[18] == "-" and nil or parts[18],
-        comboPieceId = parts[19] == "-" and nil or parts[19],
+        comboSetId = parts[19] == "-" and nil or parts[19],
+        comboPieceId = parts[20] == "-" and nil or parts[20],
     })
-    remove_material(hero, first_item)
-    remove_material(hero, second_item)
-    local result_item = add_result_to_slot(hero, result)
+    remove_material(carrier, first_item)
+    remove_material(carrier, second_item)
+    local result_item = add_result_to_slot(carrier, result)
     if result_item == nil then
-        restore_material(hero, 0, first)
-        restore_material(hero, 1, second)
+        restore_material(carrier, 0, first)
+        restore_material(carrier, 1, second)
         report_failure(player_id, "结果无法放入第1格，材料已尝试恢复")
         return
     end
-    instance.refresh_inventory(hero)
-    if on_changed ~= nil then
+    instance.refresh_inventory(carrier)
+    if on_changed ~= nil and source == MERGE_SOURCE_HERO then
+        local hero = instance.get_hero_by_player(player_id)
         on_changed(hero, result, "merge")
     end
 end
@@ -237,9 +256,9 @@ end
 ---@param parts string[] 已按 | 分割的消息
 ---@param sender_id integer|nil 发送玩家
 function module.handle_sync(parts, sender_id)
-    if parts[1] == "MERGE_REQUEST" and parts[2] == "2" then
+    if parts[1] == "MERGE_REQUEST" and parts[2] == "3" then
         handle_request(parts, sender_id)
-    elseif parts[1] == "MERGE_RESULT" and parts[2] == "3" then
+    elseif parts[1] == "MERGE_RESULT" and parts[2] == "4" then
         if sender_id == nil or sender_id == 0 then
             handle_result(parts)
         end
@@ -253,18 +272,26 @@ function module.request_merge()
         return false
     end
     local player_id = sync_module.get_local_player_id()
-    local hero = instance.get_hero_by_player(player_id)
-    if hero == nil then
+    local carrier = instance.get_active_inventory_carrier(player_id)
+    if carrier == nil then
         return false
     end
-    local first = instance.get_by_item(instance.get_item_in_slot(hero, 0))
-    local second = instance.get_by_item(instance.get_item_in_slot(hero, 1))
+    local source = instance.is_inventory_proxy(carrier) and MERGE_SOURCE_COURIER or MERGE_SOURCE_HERO
+    local first = instance.get_by_item(instance.get_item_in_slot(carrier, 0))
+    local second = instance.get_by_item(instance.get_item_in_slot(carrier, 1))
     if first == nil or second == nil then
         report_failure(player_id, "请把两件装备放入第1、2格")
         return false
     end
     next_request_id = next_request_id + 1
-    local message = string.format("MERGE_REQUEST|2|%d|%d|%d|%d", next_request_id, player_id, first.uid, second.uid)
+    local message = string.format(
+        "MERGE_REQUEST|3|%d|%d|%s|%d|%d",
+        next_request_id,
+        player_id,
+        source,
+        first.uid,
+        second.uid
+    )
     sync_module.send_request(message)
     return true
 end

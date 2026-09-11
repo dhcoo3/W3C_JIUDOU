@@ -6,12 +6,14 @@ local config = require "config.mystery_shop"
 local item_config = require "config.items"
 local equipment = require "equipment.main"
 local equipment_instance = require "equipment.instance"
+local courier = require "courier.main"
 local sync = require "mysteryShop.sync"
 
 local module = {}
 local started = false
 local enabled = false
 local sell_trigger = nil
+local consumable_use_trigger = nil
 local event_sequence = 0
 local shop_by_unit = {}
 local active_player_by_id = {}
@@ -23,6 +25,26 @@ local processed_uids = {}
 local NEUTRAL_PASSIVE_PLAYER_ID = 15
 local DEFAULT_STOCK = 1
 local RESULT_PART_COUNT = 19
+
+--- jass.common 在部分 KKWE 运行时未导出 UNIT_STATE_MANA 常量，
+--- 但 GetUnitState/SetUnitState 仍接受 Warcraft 原生 unitstate 枚举值。
+---@param exported_state unitstate|nil jass.common 已导出的状态常量
+---@param enum_value integer Warcraft 原生 unitstate 枚举编号
+---@return unitstate state
+local function get_unit_state_enum(exported_state, enum_value)
+    if exported_state ~= nil then
+        return exported_state
+    end
+    if type(jass.ConvertUnitState) == "function" then
+        return jass.ConvertUnitState(enum_value)
+    end
+    return enum_value
+end
+
+local UNIT_STATE_LIFE = get_unit_state_enum(jass.UNIT_STATE_LIFE, 0)
+local UNIT_STATE_MAX_LIFE = get_unit_state_enum(jass.UNIT_STATE_MAX_LIFE, 1)
+local UNIT_STATE_MANA = get_unit_state_enum(jass.UNIT_STATE_MANA, 2)
+local UNIT_STATE_MAX_MANA = get_unit_state_enum(jass.UNIT_STATE_MAX_MANA, 3)
 
 local function rawcode_to_id(rawcode)
     local a, b, c, d = string.byte(rawcode or "", 1, 4)
@@ -91,7 +113,154 @@ local function get_item_rawcode(item_handle)
             return rawcode
         end
     end
+    for rawcode in pairs(config.consumableByRawcode or {}) do
+        if rawcode_to_id(rawcode) == item_id then
+            return rawcode
+        end
+    end
     return nil
+end
+
+local function get_manipulating_unit()
+    if type(jass.GetManipulatingUnit) == "function" then
+        return jass.GetManipulatingUnit()
+    end
+    return nil
+end
+
+local function get_manipulated_item()
+    if type(jass.GetManipulatedItem) == "function" then
+        return jass.GetManipulatedItem()
+    end
+    return nil
+end
+
+local function apply_percent_state(unit_handle, current_state, maximum_state, percent)
+    if unit_handle == nil or type(jass.GetUnitState) ~= "function"
+        or type(jass.SetUnitState) ~= "function"
+        or current_state == nil or maximum_state == nil then
+        return false
+    end
+    local maximum = math.max(0, tonumber(jass.GetUnitState(unit_handle, maximum_state)) or 0)
+    local current = math.max(0, tonumber(jass.GetUnitState(unit_handle, current_state)) or 0)
+    local amount = math.floor(maximum * math.max(0, math.floor(tonumber(percent) or 0)) / 100)
+    if maximum <= 0 or amount <= 0 then
+        return false
+    end
+    jass.SetUnitState(unit_handle, current_state, math.min(maximum, current + amount))
+    return true
+end
+
+--- Warcraft 1.27 写当前生命优先使用 widget 接口；部分 KKWE Lua 封装下
+--- SetUnitState(unit, UNIT_STATE_LIFE, value) 不会可靠刷新英雄当前生命。
+---@param unit_handle unit
+---@param percent integer
+---@return boolean applied
+local function apply_health_percent(unit_handle, percent)
+    if unit_handle == nil or type(jass.GetUnitState) ~= "function" then
+        return false
+    end
+    local maximum = math.max(0, tonumber(jass.GetUnitState(unit_handle, UNIT_STATE_MAX_LIFE)) or 0)
+    local current = type(jass.GetWidgetLife) == "function"
+        and math.max(0, tonumber(jass.GetWidgetLife(unit_handle)) or 0)
+        or math.max(0, tonumber(jass.GetUnitState(unit_handle, UNIT_STATE_LIFE)) or 0)
+    local amount = math.floor(maximum * math.max(0, math.floor(tonumber(percent) or 0)) / 100)
+    if maximum <= 0 or amount <= 0 then
+        print(string.format("生命药结算失败：当前=%.1f，最大=%.1f，比例=%s", current, maximum, tostring(percent)))
+        return false
+    end
+    local target = math.min(maximum, current + amount)
+    if type(jass.SetWidgetLife) == "function" then
+        jass.SetWidgetLife(unit_handle, target)
+    elseif type(jass.SetUnitState) == "function" then
+        jass.SetUnitState(unit_handle, UNIT_STATE_LIFE, target)
+    else
+        print("生命药结算失败：缺少 SetWidgetLife/SetUnitState")
+        return false
+    end
+
+    local actual = type(jass.GetWidgetLife) == "function"
+        and math.max(0, tonumber(jass.GetWidgetLife(unit_handle)) or 0)
+        or math.max(0, tonumber(jass.GetUnitState(unit_handle, UNIT_STATE_LIFE)) or 0)
+    if target > current + 0.001 and actual <= current + 0.001 then
+        print(string.format("生命药写入失败：当前=%.1f，目标=%.1f，写后=%.1f，最大=%.1f", current, target, actual, maximum))
+        return false
+    end
+    return true
+end
+
+local function is_alive(unit_handle)
+    if unit_handle == nil then
+        return false
+    end
+    if type(jass.GetWidgetLife) == "function" then
+        return (tonumber(jass.GetWidgetLife(unit_handle)) or 0) > 0.405
+    end
+    if type(jass.GetUnitState) ~= "function" then
+        return false
+    end
+    return (tonumber(jass.GetUnitState(unit_handle, UNIT_STATE_LIFE)) or 0) > 0.405
+end
+
+--- 按施放单位所属玩家取得本局实际英雄。
+--- 不读取一次性药水的物品句柄：该句柄可能在原生效果阶段已被销毁。
+---@param carrier unit 施放药水技能的单位（英雄、物品栏代理或信使）
+---@return integer|nil player_id
+---@return unit|nil hero
+local function get_consumable_owner(carrier)
+    if carrier ~= nil and type(jass.GetOwningPlayer) == "function" and type(jass.GetPlayerId) == "function" then
+        local owner = jass.GetOwningPlayer(carrier)
+        local player_id = owner ~= nil and jass.GetPlayerId(owner) or nil
+        local hero = player_id ~= nil and hero_by_player[player_id] or nil
+        if player_id ~= nil and active_player_by_id[player_id] and hero ~= nil then
+            return player_id, hero
+        end
+    end
+
+    -- 兼容无法读取所属玩家的旧运行时，以及特殊物品栏载体。
+    local inventory_owner = equipment_instance.get_inventory_owner(carrier)
+    if inventory_owner ~= nil then
+        local player_id = equipment_instance.get_player_id(inventory_owner)
+        if player_id ~= nil and active_player_by_id[player_id] and hero_by_player[player_id] == inventory_owner then
+            return player_id, inventory_owner
+        end
+    end
+    local courier_owner = courier.get_hero(carrier)
+    if courier_owner ~= nil then
+        local player_id = equipment_instance.get_player_id(courier_owner)
+        if player_id ~= nil and active_player_by_id[player_id] and hero_by_player[player_id] == courier_owner then
+            return player_id, courier_owner
+        end
+    end
+    return nil, nil
+end
+
+--- Warcraft 原生“使用物品”事件入口。
+--- 必须使用 GetManipulatingUnit/GetManipulatedItem 读取该事件的响应对象；
+--- GetTriggerUnit 在旧版 KKWE 对该事件不保证返回使用者。
+local function on_consumable_use()
+    if not enabled then
+        return
+    end
+    local carrier = get_manipulating_unit()
+    local item_handle = get_manipulated_item()
+    if carrier == nil or item_handle == nil then
+        return
+    end
+    local item_rawcode = get_item_rawcode(item_handle)
+    local consumable = item_rawcode and config.consumableByRawcode[item_rawcode] or nil
+    if consumable == nil or consumable.enabled ~= 1 then
+        return
+    end
+    local _, hero = get_consumable_owner(carrier)
+    if hero == nil or not is_alive(hero) then
+        return
+    end
+    if consumable.kind == "health" then
+        apply_health_percent(hero, consumable.healPercent)
+    elseif consumable.kind == "mana" then
+        apply_percent_state(hero, UNIT_STATE_MANA, UNIT_STATE_MAX_MANA, consumable.manaPercent)
+    end
 end
 
 local function join_passives(passives)
@@ -326,6 +495,34 @@ local function register_sell_event()
     return true
 end
 
+local function register_consumable_use_event()
+    if type(jass.CreateTrigger) ~= "function"
+        or type(jass.TriggerRegisterPlayerUnitEvent) ~= "function"
+        or type(jass.TriggerAddAction) ~= "function"
+        or jass.EVENT_PLAYER_UNIT_USE_ITEM == nil
+        or type(jass.GetManipulatingUnit) ~= "function"
+        or type(jass.GetManipulatedItem) ~= "function"
+        or type(jass.GetItemTypeId) ~= "function"
+        or type(jass.GetOwningPlayer) ~= "function"
+        or type(jass.GetPlayerId) ~= "function"
+        or type(jass.GetUnitState) ~= "function"
+        or type(jass.SetUnitState) ~= "function" then
+        print("神秘商店启动失败：缺少药水使用事件所需的原生接口")
+        return false
+    end
+    consumable_use_trigger = jass.CreateTrigger()
+    for _, player_id in ipairs(sorted_active_player_ids()) do
+        jass.TriggerRegisterPlayerUnitEvent(
+            consumable_use_trigger,
+            jass.Player(player_id),
+            jass.EVENT_PLAYER_UNIT_USE_ITEM,
+            nil
+        )
+    end
+    jass.TriggerAddAction(consumable_use_trigger, on_consumable_use)
+    return true
+end
+
 --- 启动四个区域神秘商店。
 ---@param hero_results HeroSelectionResult[] 参与玩家的英雄结果
 ---@return boolean started_now 是否完成启动
@@ -349,7 +546,7 @@ function module.start(hero_results)
         return false
     end
     disable_default_stock_trigger()
-    if not create_shops() or not register_sell_event() then
+    if not create_shops() or not register_sell_event() or not register_consumable_use_event() then
         return false
     end
     enabled = true
@@ -369,5 +566,6 @@ function module.get_local_player_id()
 end
 
 module.handle_sell = on_sell
+module.handle_consumable_use = on_consumable_use
 
 return module

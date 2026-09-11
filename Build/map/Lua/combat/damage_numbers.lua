@@ -1,5 +1,6 @@
 --- PVE 伤害飘字业务模块。
 --- 监听玩家英雄造成的最终伤害，并通过固定 texttag 对象池显示向上飘动的数字。
+--- 普攻及普攻加成沿用原有黄橙色；技能、触发、召唤物和装备自动技能伤害使用蓝色。
 local jass = require "jass.common"
 local damage_service = require "combat.damage"
 
@@ -15,6 +16,12 @@ local TEXT_VELOCITY_Y = 0.0355
 local COLOR_RED = 255
 local COLOR_GREEN = 220
 local COLOR_BLUE = 60
+local SKILL_COLOR_RED = 80
+local SKILL_COLOR_GREEN = 170
+local SKILL_COLOR_BLUE = 255
+local HEAL_COLOR_RED = 80
+local HEAL_COLOR_GREEN = 255
+local HEAL_COLOR_BLUE = 100
 local COLOR_ALPHA = 255
 local GOLD_COLOR_RED = 255
 local GOLD_COLOR_GREEN = 215
@@ -37,6 +44,9 @@ local next_pool_index = 1
 local display_sequence = 0
 local update_timer = nil
 local hero_sources = {}
+local tracked_heroes = {}
+local last_hero_life = {}
+local pending_heal_fraction = {}
 local first_damage_logged = false
 ---@type DamageNumberEntry[]
 local pool = {}
@@ -68,21 +78,6 @@ local function hide_entry(entry)
     jass.SetTextTagVisibility(entry.tag, false)
     jass.SetTextTagSuspended(entry.tag, true)
     entry.active = false
-end
-
-local function update_pool()
-    elapsed_seconds = elapsed_seconds + UPDATE_INTERVAL_SECONDS
-    for _, entry in ipairs(pool) do
-        if entry.active then
-            if elapsed_seconds >= entry.expiresAt then
-                hide_entry(entry)
-            elseif elapsed_seconds >= entry.fadeAt then
-                local fade_progress = (elapsed_seconds - entry.fadeAt) / (entry.expiresAt - entry.fadeAt)
-                local alpha = math.max(0, math.floor(COLOR_ALPHA * (1.0 - fade_progress)))
-                jass.SetTextTagColor(entry.tag, entry.red, entry.green, entry.blue, alpha)
-            end
-        end
-    end
 end
 
 local function create_pool()
@@ -139,16 +134,77 @@ local function show_text(text, x, y, red, green, blue, height_offset)
     entry.active = true
 end
 
-local function show_damage(target, damage)
+local function show_damage(target, damage, is_basic_attack)
+    local red, green, blue = COLOR_RED, COLOR_GREEN, COLOR_BLUE
+    if not is_basic_attack then
+        red, green, blue = SKILL_COLOR_RED, SKILL_COLOR_GREEN, SKILL_COLOR_BLUE
+    end
     show_text(
         tostring(math.floor(damage + 0.5)),
         jass.GetUnitX(target),
         jass.GetUnitY(target),
-        COLOR_RED,
-        COLOR_GREEN,
-        COLOR_BLUE,
+        red,
+        green,
+        blue,
         TEXT_HEIGHT_OFFSET
     )
+end
+
+local function show_healing(hero, amount)
+    amount = math.floor(tonumber(amount) or 0)
+    if hero == nil or amount <= 0 then return end
+    show_text(
+        "+" .. tostring(amount),
+        jass.GetUnitX(hero),
+        jass.GetUnitY(hero),
+        HEAL_COLOR_RED,
+        HEAL_COLOR_GREEN,
+        HEAL_COLOR_BLUE,
+        TEXT_HEIGHT_OFFSET
+    )
+end
+
+--- 轮询英雄当前生命值，统一捕获药水、吸血、持续恢复以及其他原生/脚本恢复。
+--- 只有当前生命实际增加时才显示；初始化和掉血不会产生恢复飘字。
+local function sample_hero_recovery()
+    if type(jass.GetUnitState) ~= "function" or jass.UNIT_STATE_LIFE == nil then
+        return
+    end
+
+    for hero_id, hero in pairs(tracked_heroes) do
+        local current = math.max(0.0, tonumber(jass.GetUnitState(hero, jass.UNIT_STATE_LIFE)) or 0.0)
+        local previous = last_hero_life[hero_id]
+        if previous ~= nil then
+            local delta = current - previous
+            if delta > 0.0001 and current > 0.405 then
+                local total = delta + (pending_heal_fraction[hero_id] or 0.0)
+                local amount = math.floor(total + 0.0001)
+                pending_heal_fraction[hero_id] = total - amount
+                if amount > 0 then
+                    show_healing(hero, amount)
+                end
+            elseif delta < -0.0001 then
+                pending_heal_fraction[hero_id] = 0.0
+            end
+        end
+        last_hero_life[hero_id] = current
+    end
+end
+
+local function update_pool()
+    elapsed_seconds = elapsed_seconds + UPDATE_INTERVAL_SECONDS
+    sample_hero_recovery()
+    for _, entry in ipairs(pool) do
+        if entry.active then
+            if elapsed_seconds >= entry.expiresAt then
+                hide_entry(entry)
+            elseif elapsed_seconds >= entry.fadeAt then
+                local fade_progress = (elapsed_seconds - entry.fadeAt) / (entry.expiresAt - entry.fadeAt)
+                local alpha = math.max(0, math.floor(COLOR_ALPHA * (1.0 - fade_progress)))
+                jass.SetTextTagColor(entry.tag, entry.red, entry.green, entry.blue, alpha)
+            end
+        end
+    end
 end
 
 local function on_damage_report(report)
@@ -169,7 +225,7 @@ local function on_damage_report(report)
         return
     end
 
-    show_damage(target, damage)
+    show_damage(target, damage, report.isBasicAttack == true)
     if not first_damage_logged then
         first_damage_logged = true
         print("伤害飘字已捕获首个英雄伤害事件")
@@ -229,7 +285,13 @@ function module.start(hero_results)
     local hero_count = 0
     for _, result in ipairs(hero_results or {}) do
         if result.unit ~= nil then
-            hero_sources[jass.GetHandleId(result.unit)] = true
+            local hero_id = jass.GetHandleId(result.unit)
+            hero_sources[hero_id] = true
+            tracked_heroes[hero_id] = result.unit
+            if type(jass.GetUnitState) == "function" and jass.UNIT_STATE_LIFE ~= nil then
+                last_hero_life[hero_id] = math.max(0.0,
+                    tonumber(jass.GetUnitState(result.unit, jass.UNIT_STATE_LIFE)) or 0.0)
+            end
             hero_count = hero_count + 1
         end
     end

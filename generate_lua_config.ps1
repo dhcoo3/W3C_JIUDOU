@@ -55,6 +55,56 @@ function Split-LniArray {
 
 . (Join-Path $PSScriptRoot 'excel_config.ps1')
 
+function Read-SimpleObjectTable {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "找不到文本配置源：$Path"
+    }
+
+    $sections = [ordered]@{}
+    $currentId = $null
+    $current = $null
+    $lineNumber = 0
+    foreach ($rawLine in [System.IO.File]::ReadAllLines($Path, [System.Text.Encoding]::UTF8)) {
+        $lineNumber = $lineNumber + 1
+        $line = $rawLine.Trim()
+        if ($line.Length -eq 0 -or $line.StartsWith(';') -or $line.StartsWith('#')) {
+            continue
+        }
+        if ($line -match '^\[([A-Za-z0-9_]+)\]$') {
+            $currentId = $Matches[1]
+            if ($sections.Contains($currentId)) {
+                throw "文本配置区段重复：$Path / $currentId"
+            }
+            $current = [ordered]@{}
+            $sections[$currentId] = $current
+            continue
+        }
+        if ($null -eq $current -or $line -notmatch '^([^=]+?)\s*=\s*(.*?)\s*$') {
+            throw "文本配置行格式无效：$Path / 第 $lineNumber 行"
+        }
+        $field = $Matches[1].Trim()
+        $value = $Matches[2].Trim()
+        if ($field.Length -eq 0 -or $current.Contains($field)) {
+            throw "文本配置字段无效或重复：$Path / $currentId / 第 $lineNumber 行"
+        }
+        if ($value.Length -ge 2 -and $value.StartsWith('"') -and $value.EndsWith('"')) {
+            $value = $value.Substring(1, $value.Length - 2)
+        }
+        $current[$field] = $value
+    }
+
+    if ($sections.Count -eq 0) {
+        throw "文本配置不包含数据：$Path"
+    }
+    return [pscustomobject]@{
+        Sections = $sections
+    }
+}
+
 function Read-RegionsFromJass {
     param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -468,8 +518,10 @@ function New-MysteryShopConfig {
     param(
         [Parameter(Mandatory = $true)][object]$ShopTable,
         [Parameter(Mandatory = $true)][object]$StockTable,
+        [Parameter(Mandatory = $true)][object]$ConsumableTable,
         [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Units,
-        [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Items
+        [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Items,
+        [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Abilities
     )
 
     $requiredShopFields = @('blockId', 'sourcePoint', 'unitRawcode', 'x', 'y', 'facing', 'enabled')
@@ -536,6 +588,7 @@ function New-MysteryShopConfig {
 
     $stock = [ordered]@{}
     $boxByRawcode = [ordered]@{}
+    $consumableByRawcode = [ordered]@{}
     $boxPriceByRawcode = @{}
     $stockByShopAndLevel = @{}
     foreach ($stockId in $StockTable.Sections.Keys) {
@@ -602,16 +655,18 @@ function New-MysteryShopConfig {
             stockId = [string]$stockId
             shopId = $shopId
             itemRawcode = $itemRawcode
+            productKind = 'box'
             boxLevel = $boxLevel
             price = $price
             initialStock = $initialStock
             maxStock = $maxStock
+            stockRegen = 1
             enabled = $enabled
         }
     }
 
     if ($stock.Count -ne 12) {
-        throw "神秘商店库存必须恰有 12 条，实际为：$($stock.Count)"
+        throw "mystery_shop.xlsx/stock 必须恰有 12 条装备箱库存，实际为：$($stock.Count)"
     }
     foreach ($shopId in $shops.Keys) {
         foreach ($boxLevel in @(1, 2, 3)) {
@@ -624,12 +679,148 @@ function New-MysteryShopConfig {
         throw "神秘商店装备箱必须恰有 3 个 Rawcode，实际为：$($boxByRawcode.Count)"
     }
 
+    $requiredConsumableFields = @(
+        'itemRawcode', 'abilityRawcode', 'parent', 'kind', 'name', 'description',
+        'tip', 'ubertip', 'price', 'initialStock', 'maxStock', 'stockRegen',
+        'healPercent', 'manaPercent', 'enabled'
+    )
+    $seenConsumableKinds = @{}
+    foreach ($consumableId in $ConsumableTable.Sections.Keys) {
+        $row = $ConsumableTable.Sections[$consumableId]
+        foreach ($field in $requiredConsumableFields) {
+            if (-not $row.Contains($field)) {
+                throw "神秘商店消耗品配置缺少字段：mystery_shop_consumables.ini/$consumableId/$field"
+            }
+        }
+
+        $itemRawcode = [string]$row.itemRawcode
+        $abilityRawcode = [string]$row.abilityRawcode
+        $parent = [string]$row.parent
+        $kind = [string]$row.kind
+        $price = [int]$row.price
+        $initialStock = [int]$row.initialStock
+        $maxStock = [int]$row.maxStock
+        $stockRegen = [int]$row.stockRegen
+        $healPercent = [int]$row.healPercent
+        $manaPercent = [int]$row.manaPercent
+        $enabled = [int]$row.enabled
+        if ($itemRawcode -notmatch '^I0P[12]$' -or $abilityRawcode -notmatch '^A0P[12]$') {
+            throw "神秘商店消耗品 Rawcode 无效：mystery_shop_consumables.ini/$consumableId"
+        }
+        if ($Items.Contains($itemRawcode) -or $Abilities.Contains($abilityRawcode)) {
+            throw "神秘商店消耗品 Rawcode 与现有物编冲突：$consumableId"
+        }
+        if ($kind -ne 'health' -and $kind -ne 'mana') {
+            throw "神秘商店消耗品类型必须为 health 或 mana：mystery_shop_consumables.ini/$consumableId"
+        }
+        if ($seenConsumableKinds.ContainsKey($kind)) {
+            throw "神秘商店消耗品类型重复：$kind"
+        }
+        if ([string]::IsNullOrWhiteSpace($parent)) {
+            throw "神秘商店消耗品必须配置物品父对象：$consumableId"
+        }
+        if ($price -le 0 -or $initialStock -lt 0 -or $maxStock -lt $initialStock -or $stockRegen -le 0) {
+            throw "神秘商店消耗品价格或库存无效：mystery_shop_consumables.ini/$consumableId"
+        }
+        if ($healPercent -lt 0 -or $manaPercent -lt 0 -or ($enabled -ne 0 -and $enabled -ne 1)) {
+            throw "神秘商店消耗品恢复比例或启用状态无效：mystery_shop_consumables.ini/$consumableId"
+        }
+        if ($kind -eq 'health' -and ($healPercent -le 0 -or $manaPercent -ne 0)) {
+            throw "生命药必须只配置正数 healPercent：mystery_shop_consumables.ini/$consumableId"
+        }
+        if ($kind -eq 'mana' -and ($manaPercent -le 0 -or $healPercent -ne 0)) {
+            throw "魔法药必须只配置正数 manaPercent：mystery_shop_consumables.ini/$consumableId"
+        }
+
+        # 生命药与魔法药分别使用对应的原生可用性检查；实际恢复数值仍由
+        # EVENT_PLAYER_UNIT_USE_ITEM 回调按 A0P1/A0P2 的配置百分比结算。
+        $abilityParent = if ($kind -eq 'health') { 'AIh1' } else { 'AIm1' }
+        $Items[$itemRawcode] = [ordered]@{
+            _parent = $parent
+            Name = [string]$row.name
+            Description = [string]$row.description
+            Tip = [string]$row.tip
+            Ubertip = [string]$row.ubertip
+            abilList = $abilityRawcode
+            class = 'Purchasable'
+            Level = 1
+            goldcost = $price
+            lumbercost = 0
+            drop = 0
+            droppable = 1
+            sellable = 0
+            pawnable = 0
+            perishable = 1
+            powerup = 0
+            uses = 1
+            usable = 1
+            isEquipment = 0
+            equipLevel = 0
+            mergeable = 0
+            stockMax = $maxStock
+            stockStart = $initialStock
+            stockRegen = $stockRegen
+        }
+        $Abilities[$abilityRawcode] = [ordered]@{
+            _parent = $abilityParent
+            Name = [string]$row.name
+            Ubertip = '由 Lua 按百分比结算恢复效果。'
+            hero = 0
+            item = 1
+            levels = 1
+            reqLevel = 0
+            levelSkip = 0
+            Cool = 0
+            Cost = 0
+            Rng = 100
+            DataA = 0
+        }
+        $seenConsumableKinds[$kind] = $itemRawcode
+        $consumableByRawcode[$itemRawcode] = [ordered]@{
+            rawcode = $itemRawcode
+            kind = $kind
+            abilityRawcode = $abilityRawcode
+            healPercent = $healPercent
+            manaPercent = $manaPercent
+            price = $price
+            stockRegen = $stockRegen
+            enabled = $enabled
+        }
+
+        foreach ($shopId in $shops.Keys) {
+            $stockId = "STOCK_${shopId}_$($kind.ToUpperInvariant())"
+            if ($stock.Contains($stockId)) {
+                throw "神秘商店库存 ID 重复：$stockId"
+            }
+            $stock[$stockId] = [ordered]@{
+                stockId = $stockId
+                shopId = $shopId
+                itemRawcode = $itemRawcode
+                productKind = $kind
+                boxLevel = 0
+                price = $price
+                initialStock = $initialStock
+                maxStock = $maxStock
+                stockRegen = $stockRegen
+                enabled = $enabled
+            }
+        }
+    }
+    if (($ConsumableTable.Sections.Count -ne 2) -or ($seenConsumableKinds.Count -ne 2) -or (-not $seenConsumableKinds.ContainsKey('health')) -or (-not $seenConsumableKinds.ContainsKey('mana'))) {
+        throw "神秘商店消耗品必须恰有 health 和 mana 两种配置"
+    }
+    if ($stock.Count -ne 20) {
+        throw "神秘商店最终库存必须恰有 20 条（12 条装备箱、8 条消耗品），实际为：$($stock.Count)"
+    }
+
     return [ordered]@{
         version = 1
         refillIntervalSeconds = 1
+        consumableRefillIntervalSeconds = 5
         shops = $shops
         stock = $stock
         boxByRawcode = $boxByRawcode
+        consumableByRawcode = $consumableByRawcode
     }
 }
 
@@ -1939,6 +2130,8 @@ try {
     $mysteryShopPath = Join-Path $excelDirectory 'mystery_shop.xlsx'
     $mysteryShopLocationsTable = Read-ExcelObjectTable $mysteryShopPath 'shops' 'shopId'
     $mysteryShopStockTable = Read-ExcelObjectTable $mysteryShopPath 'stock' 'stockId'
+    $mysteryShopConsumablePath = Join-Path $excelDirectory 'mystery_shop_consumables.ini'
+    $mysteryShopConsumableTable = Read-SimpleObjectTable $mysteryShopConsumablePath
     $equipmentPath = Join-Path $excelDirectory 'equipment.xlsx'
     $equipmentLevelTable = Read-ExcelObjectTable $equipmentPath 'level' 'levelId'
     $equipmentTemplateTable = Read-ExcelObjectTable $equipmentPath 'template' 'templateId'
@@ -1964,7 +2157,7 @@ try {
         [void]$equipmentComboTable.Sections[$comboPieceId].Remove('slotType')
     }
 
-    $mysteryShopData = New-MysteryShopConfig $mysteryShopLocationsTable $mysteryShopStockTable $unitTable.Sections $itemTable.Sections
+    $mysteryShopData = New-MysteryShopConfig $mysteryShopLocationsTable $mysteryShopStockTable $mysteryShopConsumableTable $unitTable.Sections $itemTable.Sections $abilityTable.Sections
     $units = ConvertTo-ObjectConfig $unitTable.Sections
     Assert-CombatUnitTypes $units
     foreach ($rawcode in @($units.Keys)) {
@@ -2070,7 +2263,7 @@ try {
         @{ Name = 'boss_affixes.lua'; Annotations = @('---@class BossAffixConfig', '---@field affixId string 词缀编号', '---@field bossRawcode string 对应 Boss Rawcode', '---@field name string 词缀显示名称', '---@field description string 词缀说明', '---@field kind string 原生物编词缀类型', '---@field baseValue integer 基础数值', '---@field secondaryValue integer 次级数值', '---@field duration integer 基础持续时间', '---@field refillLife boolean 添加后是否回满生命', '---@field indicatorAbilityRawcode string 状态栏图标辅助光环 Rawcode', '---@field indicatorBuffRawcode string 状态栏图标 Buff Rawcode', '---@field globalAbilities string[]|nil 五个难度技能组 Rawcode', '---@field unitAbilities table<string, string[]>|nil 按小怪 Rawcode 生成的五个难度技能组'); Data = $bossAffixData.luaData },
         @{ Name = 'gold.lua'; Annotations = @('---@class GoldSettings', '---@field initialGold integer 本局初始金币', '---@field maxGoldDropBonusPercent integer 金币掉落加成上限', '---@field maxGold integer 原生金币上限', '---@class GoldConfig', '---@field settings GoldSettings', '---@field rewards table<string, table<string, integer>> 怪物金币奖励'); Data = $goldData },
         @{ Name = 'experience.lua'; Annotations = @('---@class ExperienceSettings', '---@field maxLevel integer 英雄最大等级', '---@field initialExpBonusPercent integer 初始经验加成百分比', '---@field maxExpBonusPercent integer 经验加成上限百分比', '---@class ExperienceLevelConfig', '---@field levelId string 等级配置 ID', '---@field level integer 英雄等级', '---@field requiredExp integer 升到下一级所需经验', '---@class ExperienceConfig', '---@field version integer 配置版本', '---@field settings ExperienceSettings', '---@field levels table<string, ExperienceLevelConfig> 等级配置'); Data = $experienceData.luaData }
-        @{ Name = 'mystery_shop.lua'; Annotations = @('---@class MysteryShopLocation', '---@field shopId string 商店 ID', '---@field blockId integer 地图区域编号', '---@field sourcePoint string 参考刷怪点', '---@field unitRawcode string 商店单位 Rawcode', '---@field x integer 世界坐标 X', '---@field y integer 世界坐标 Y', '---@field facing integer 朝向', '---@field enabled integer 启用状态', '---@class MysteryShopStock', '---@field stockId string 库存 ID', '---@field shopId string 商店 ID', '---@field itemRawcode string 装备箱 Rawcode', '---@field boxLevel integer 装备箱等级', '---@field price integer 金币价格', '---@field initialStock integer 初始库存', '---@field maxStock integer 最大库存', '---@field enabled integer 启用状态', '---@class MysteryShopConfig', '---@field version integer 配置版本', '---@field refillIntervalSeconds integer 补货间隔秒数', '---@field shops table<string, MysteryShopLocation>', '---@field stock table<string, MysteryShopStock>', '---@field boxByRawcode table<string, integer>'); Data = $mysteryShopData }
+        @{ Name = 'mystery_shop.lua'; Annotations = @('---@class MysteryShopLocation', '---@field shopId string 商店 ID', '---@field blockId integer 地图区域编号', '---@field sourcePoint string 参考刷怪点', '---@field unitRawcode string 商店单位 Rawcode', '---@field x integer 世界坐标 X', '---@field y integer 世界坐标 Y', '---@field facing integer 朝向', '---@field enabled integer 启用状态', '---@class MysteryShopStock', '---@field stockId string 库存 ID', '---@field shopId string 商店 ID', '---@field itemRawcode string 商品 Rawcode', '---@field productKind string 商品类型：box/health/mana', '---@field boxLevel integer 装备箱等级；消耗品为 0', '---@field price integer 金币价格', '---@field initialStock integer 初始库存', '---@field maxStock integer 最大库存', '---@field stockRegen integer 补货间隔秒数', '---@field enabled integer 启用状态', '---@class MysteryShopConsumable', '---@field rawcode string 消耗品 Rawcode', '---@field kind string 恢复类型：health/mana', '---@field abilityRawcode string 物品技能 Rawcode', '---@field healPercent integer 最大生命恢复百分比', '---@field manaPercent integer 最大法力恢复百分比', '---@field price integer 金币价格', '---@field stockRegen integer 补货间隔秒数', '---@field enabled integer 启用状态', '---@class MysteryShopConfig', '---@field version integer 配置版本', '---@field refillIntervalSeconds integer 装备箱补货间隔秒数', '---@field consumableRefillIntervalSeconds integer 消耗品补货间隔秒数', '---@field shops table<string, MysteryShopLocation>', '---@field stock table<string, MysteryShopStock>', '---@field boxByRawcode table<string, integer>', '---@field consumableByRawcode table<string, MysteryShopConsumable>'); Data = $mysteryShopData }
         ,@{ Name = 'equipment.lua'; Annotations = @(
             '---@class EquipmentLevelConfig',
             '---@field levelId string 等级配置 ID',

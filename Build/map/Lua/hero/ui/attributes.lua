@@ -3,6 +3,7 @@
 local jass = require "jass.common"
 local frame = require "platform.frame"
 local hero_stats = require "hero.stats"
+local rogue_state = require "rogue.state"
 local gold = require "gold.main"
 local experience = require "experience.main"
 local attribute_config = require "config.attributes"
@@ -118,7 +119,14 @@ local function format_gold_bonus(value)
     return (value >= 0 and "+" or "") .. tostring(value) .. "%"
 end
 
-local function format_snapshot(snapshot, growth, gold_bonus, experience_snapshot)
+local function get_skill_damage_bonus_percent(hero)
+    local intelligence_bonus = hero_stats.get_skill_damage_bonus_percent(hero)
+    local state = rogue_state.get_by_hero(hero)
+    local common_bonus = state and state.common and state.common.skill_damage_percent or 0
+    return math.max(0, math.floor(intelligence_bonus + (tonumber(common_bonus) or 0)))
+end
+
+local function format_snapshot(snapshot, growth, gold_bonus, experience_snapshot, skill_damage_bonus)
     local lines = {}
     local previous_group = nil
     for _, definition in ipairs(ordered_definitions()) do
@@ -135,6 +143,10 @@ local function format_snapshot(snapshot, growth, gold_bonus, experience_snapshot
             .. format_projection_limit(definition, snapshot[definition.attributeId])
         ))
     end
+    table.insert(lines, string.format(
+        "技能增幅：|cff80ff80+%d%%|r",
+        math.max(0, math.floor(tonumber(skill_damage_bonus) or 0))
+    ))
     table.insert(lines, "")
     table.insert(lines, "|cffffcc00成长属性|r")
     local experience_level = math.floor(tonumber(experience_snapshot and experience_snapshot.level) or 1)
@@ -170,11 +182,13 @@ local function refresh_panel(snapshot)
     local player_id = local_player_id()
     local gold_bonus = player_id ~= nil and gold.get_gold_bonus(player_id) or 0
     local experience_snapshot = experience.get_snapshot(active_hero)
+    local skill_damage_bonus = get_skill_damage_bonus_percent(active_hero)
     frame.set_text(panel.content, format_snapshot(
         snapshot or hero_stats.get_snapshot(active_hero),
         growth,
         gold_bonus,
-        experience_snapshot
+        experience_snapshot,
+        skill_damage_bonus
     ))
 end
 

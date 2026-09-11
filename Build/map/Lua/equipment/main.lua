@@ -99,8 +99,14 @@ function module.start(hero_results, session_seed)
     end
     drop.set_host_checker(sync.is_host)
     pickup.start(hero_results, fallback_allowed, on_changed)
-    tooltip.start()
     courier.start(hero_results, sync, critical_enabled, fallback_allowed)
+    for _, result in ipairs(hero_results) do
+        local courier_unit = courier.get_by_player(result.playerId)
+        if courier_unit ~= nil and not pickup.register_inventory_proxy(result.unit, courier_unit) then
+            print("飞行信使背包代理登记失败：player=" .. tostring(result.playerId))
+        end
+    end
+    tooltip.start()
     if not critical_enabled then
         drop.start(sync.broadcast, false)
         merge.start(hero_results, sync, false, on_changed, on_failure)

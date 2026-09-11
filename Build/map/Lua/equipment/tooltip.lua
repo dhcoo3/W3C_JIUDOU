@@ -39,6 +39,10 @@ local function get_local_hero()
     return instance.get_hero_by_player(get_local_player_id())
 end
 
+local function get_local_inventory_carrier()
+    return instance.get_active_inventory_carrier(get_local_player_id())
+end
+
 local function find_native_tooltip()
     local direct = frame.get_tooltip()
     if direct ~= nil then
@@ -205,12 +209,13 @@ function module.build_description(equipment, hero)
 end
 
 local function show_slot(slot)
+    local carrier = get_local_inventory_carrier()
     local hero = get_local_hero()
-    if hero == nil then
+    if carrier == nil or hero == nil then
         hide_current()
         return
     end
-    local item_handle = instance.get_item_in_slot(hero, slot)
+    local item_handle = instance.get_item_in_slot(carrier, slot)
     local equipment = item_handle and instance.get_by_item(item_handle) or nil
     if equipment == nil then
         hide_current()

@@ -179,9 +179,10 @@ local function schedule_drop_refresh(hero, equipment, retries_left)
 end
 
 local function on_pickup()
-    local hero = get_manipulating_unit()
+    local carrier = get_manipulating_unit()
     local item_handle = get_manipulated_item()
-    if hero == nil or item_handle == nil or instance.get_hero_state(hero) == nil then
+    local hero = instance.get_inventory_owner(carrier)
+    if hero == nil or item_handle == nil then
         return
     end
 
@@ -189,13 +190,18 @@ local function on_pickup()
     if equipment == nil then
         return
     end
+    -- 信使等代理背包只保存装备实例，不会触发英雄装备属性、被动或自动技能刷新。
+    if instance.is_inventory_proxy(carrier) then
+        return
+    end
     schedule_pickup_apply(hero, equipment, PICKUP_APPLY_MAX_RETRIES)
 end
 
 local function on_drop()
-    local hero = get_manipulating_unit()
+    local carrier = get_manipulating_unit()
     local item_handle = get_manipulated_item()
-    if hero == nil or item_handle == nil or instance.get_hero_state(hero) == nil then
+    local hero = instance.get_inventory_owner(carrier)
+    if hero == nil or item_handle == nil then
         return
     end
     -- 地面道具仍使用同一个 Warcraft 物品句柄；保留实例才能让任意队友
@@ -204,7 +210,19 @@ local function on_drop()
     if equipment == nil then
         return
     end
+    if instance.is_inventory_proxy(carrier) then
+        return
+    end
     schedule_drop_refresh(hero, equipment, DROP_REFRESH_MAX_RETRIES)
+end
+
+local function scan_inventory(carrier)
+    for slot = 0, 5 do
+        local item_handle = instance.get_item_in_slot(carrier, slot)
+        if item_handle ~= nil then
+            ensure_instance(item_handle)
+        end
+    end
 end
 
 local function register_for_players(hero_results)
@@ -236,16 +254,23 @@ function module.start(hero_results, fallback, changed)
     register_for_players(hero_results)
     for _, result in ipairs(hero_results or {}) do
         local hero = result.unit
-        for slot = 0, 5 do
-            local item_handle = instance.get_item_in_slot(hero, slot)
-            if item_handle ~= nil then
-                ensure_instance(item_handle)
-            end
-        end
+        scan_inventory(hero)
         if on_changed ~= nil then
             on_changed(hero, nil, "initial")
         end
     end
+    return true
+end
+
+--- 登记英雄的独立物品栏单位，并扫描其已有物品建立装备实例映射。
+---@param hero unit 绑定英雄
+---@param proxy_unit unit 独立物品栏单位
+---@return boolean registered 是否成功登记
+function module.register_inventory_proxy(hero, proxy_unit)
+    if not instance.register_inventory_proxy(hero, proxy_unit) then
+        return false
+    end
+    scan_inventory(proxy_unit)
     return true
 end
 
