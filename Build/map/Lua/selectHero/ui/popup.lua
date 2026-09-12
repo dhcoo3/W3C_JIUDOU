@@ -10,6 +10,17 @@ local CARD_COUNT = 3
 local SKILL_COUNT = 4
 local BACKDROP_TEMPLATE = "EscMenuControlBackdropTemplate"
 local TEXT_TEMPLATE = "EscMenuLabelTextTemplate"
+local ROOT_WIDTH = 0.780
+local ROOT_HEIGHT = 0.545
+local CARD_WIDTH = 0.190
+local CARD_HEIGHT = 0.315
+local CARD_STEP_X = 0.210
+local CARD_OFFSET_Y = 0.017
+local TEXT_GOLD = "F3E4BE"
+local TEXT_CYAN = "4BE5F5"
+local TEXT_MUTED = "B8C2BC"
+local TEXT_DISABLED = "7E8982"
+local TEXT_WARNING = "F09A45"
 
 local next_frame_id = 0
 local current_popup = nil
@@ -89,18 +100,48 @@ local function create_click_target(parent, suffix, width, height, offset_x, offs
     return button
 end
 
-local function format_stat(name, value, growth)
-    return string.format("%s  %d  +%d/级", name, value, growth)
+local function color_text(color, value)
+    return string.format("|cff%s%s|r", color, value)
+end
+
+local function create_stat_row(parent, suffix, card_offset_x, card_offset_y, label, value, growth, offset_y)
+    create_text(
+        parent,
+        suffix .. "Label",
+        0.046,
+        0.018,
+        card_offset_x - 0.051,
+        card_offset_y + offset_y,
+        color_text(TEXT_MUTED, label)
+    )
+    create_text(
+        parent,
+        suffix .. "Value",
+        0.036,
+        0.018,
+        card_offset_x + 0.000,
+        card_offset_y + offset_y,
+        color_text(TEXT_GOLD, tostring(value))
+    )
+    create_text(
+        parent,
+        suffix .. "Growth",
+        0.063,
+        0.018,
+        card_offset_x + 0.054,
+        card_offset_y + offset_y,
+        color_text(TEXT_CYAN, string.format("+%d/级", growth))
+    )
 end
 
 local function format_ability_detail(ability)
     return string.format(
-        "%s|n%s|n伤害：%s    范围：%s    冷却：%s",
-        ability.name,
-        ability.description,
+        "%s  |cffB8C2BC伤害 %s · 范围 %s · 冷却 %s|r|n%s",
+        color_text(TEXT_GOLD, ability.name),
         ability.damage,
         ability.range,
-        ability.cooldown
+        ability.cooldown,
+        color_text(TEXT_MUTED, ability.description)
     )
 end
 
@@ -115,14 +156,14 @@ local function set_card_selected(rawcode)
 end
 
 local function create_hero_card(popup, hero, index, options)
-    local card_offset_x = -0.215 + (index - 1) * 0.215
-    local card_offset_y = 0.012
+    local card_offset_x = -CARD_STEP_X + (index - 1) * CARD_STEP_X
+    local card_offset_y = CARD_OFFSET_Y
     create_backdrop(
         popup.root,
         "CardNormal" .. hero.rawcode,
         BACKDROP_TEMPLATE,
-        0.196,
-        0.325,
+        CARD_WIDTH,
+        CARD_HEIGHT,
         card_offset_x,
         card_offset_y,
         assets.PATHS.cardNormal
@@ -131,48 +172,59 @@ local function create_hero_card(popup, hero, index, options)
         popup.root,
         "CardSelected" .. hero.rawcode,
         BACKDROP_TEMPLATE,
-        0.196,
-        0.325,
+        CARD_WIDTH,
+        CARD_HEIGHT,
         card_offset_x,
         card_offset_y,
         assets.PATHS.cardSelected
     )
     frame.set_visible(selected, false)
-    create_image(popup.root, "Portrait" .. hero.rawcode, hero.portrait, 0.165, 0.145, card_offset_x, card_offset_y + 0.058)
-    create_text(popup.root, "Name" .. hero.rawcode, 0.165, 0.026, card_offset_x, card_offset_y + 0.145, hero.name)
+    create_image(popup.root, "Portrait" .. hero.rawcode, hero.portrait, 0.154, 0.128, card_offset_x, card_offset_y + 0.055)
     create_text(
+        popup.root,
+        "Name" .. hero.rawcode,
+        0.164,
+        0.024,
+        card_offset_x,
+        card_offset_y + 0.140,
+        color_text(TEXT_GOLD, hero.name)
+    )
+    create_stat_row(
         popup.root,
         "Strength" .. hero.rawcode,
-        0.17,
-        0.020,
         card_offset_x,
-        card_offset_y - 0.062,
-        format_stat("力量", hero.strength, hero.strengthGrowth)
+        card_offset_y,
+        "力量",
+        hero.strength,
+        hero.strengthGrowth,
+        -0.072
     )
-    create_text(
+    create_stat_row(
         popup.root,
         "Agility" .. hero.rawcode,
-        0.17,
-        0.020,
         card_offset_x,
-        card_offset_y - 0.085,
-        format_stat("敏捷", hero.agility, hero.agilityGrowth)
+        card_offset_y,
+        "敏捷",
+        hero.agility,
+        hero.agilityGrowth,
+        -0.096
     )
-    create_text(
+    create_stat_row(
         popup.root,
         "Intelligence" .. hero.rawcode,
-        0.17,
-        0.020,
         card_offset_x,
-        card_offset_y - 0.108,
-        format_stat("智力", hero.intelligence, hero.intelligenceGrowth)
+        card_offset_y,
+        "智力",
+        hero.intelligence,
+        hero.intelligenceGrowth,
+        -0.120
     )
 
     create_click_target(
         popup.root,
         "CardButton" .. hero.rawcode,
-        0.190,
-        0.315,
+        CARD_WIDTH - 0.006,
+        CARD_HEIGHT - 0.006,
         card_offset_x,
         card_offset_y,
         function()
@@ -182,27 +234,17 @@ local function create_hero_card(popup, hero, index, options)
     )
 
     for ability_index, ability_rawcode in ipairs(hero.abilities) do
-        local ability_offset_x = card_offset_x - 0.060 + (ability_index - 1) * 0.040
+        local ability_offset_x = card_offset_x - 0.056 + (ability_index - 1) * 0.037
         local ability = ability_catalog.get(ability_rawcode)
-        create_backdrop(
-            popup.root,
-            "SkillSlot" .. hero.rawcode .. ability_rawcode,
-            BACKDROP_TEMPLATE,
-            0.034,
-            0.034,
-            ability_offset_x,
-            card_offset_y - 0.019,
-            assets.PATHS.skillSlot
-        )
         if ability ~= nil then
             create_image(
                 popup.root,
                 "SkillIcon" .. hero.rawcode .. ability_rawcode,
                 ability.icon,
-                0.026,
-                0.026,
+                0.028,
+                0.028,
                 ability_offset_x,
-                card_offset_y - 0.019
+                card_offset_y - 0.022
             )
         end
         create_click_target(
@@ -211,7 +253,7 @@ local function create_hero_card(popup, hero, index, options)
             0.034,
             0.034,
             ability_offset_x,
-            card_offset_y - 0.019,
+            card_offset_y - 0.022,
             function()
                 options.onSkillSelected(ability_rawcode)
             end,
@@ -260,8 +302,8 @@ function module.show(options)
         parent,
         "Root",
         BACKDROP_TEMPLATE,
-        0.690,
-        0.530,
+        ROOT_WIDTH,
+        ROOT_HEIGHT,
         0.0,
         0.0,
         assets.PATHS.panel
@@ -278,25 +320,25 @@ function module.show(options)
     }
     current_popup = popup
 
-    create_text(root, "Title", 0.320, 0.040, 0.0, 0.210, "随机英雄选择")
-    create_text(root, "Subtitle", 0.420, 0.026, 0.0, 0.174, "从随机的 3 位英雄中选择 1 位")
-    create_backdrop(root, "TimerBackground", BACKDROP_TEMPLATE, 0.100, 0.070, 0.270, 0.208, assets.PATHS.timer)
-    popup.timerText = create_text(root, "TimerText", 0.080, 0.030, 0.270, 0.208, "20 秒")
+    create_text(root, "Title", 0.340, 0.042, 0.0, 0.215, color_text(TEXT_GOLD, "随机英雄选择"))
+    create_text(root, "Subtitle", 0.440, 0.024, 0.0, 0.180, color_text(TEXT_MUTED, "从随机的 3 位英雄中选择 1 位"))
+    create_backdrop(root, "TimerBackground", BACKDROP_TEMPLATE, 0.092, 0.067, 0.300, 0.212, assets.PATHS.timer)
+    popup.timerText = create_text(root, "TimerText", 0.076, 0.028, 0.300, 0.212, color_text(TEXT_CYAN, "20 秒"))
 
     for hero_index, hero in ipairs(options.candidates) do
         create_hero_card(popup, hero, hero_index, options)
     end
 
-    create_backdrop(root, "DetailBackground", BACKDROP_TEMPLATE, 0.590, 0.085, 0.0, -0.170, assets.PATHS.detail)
-    popup.detailText = create_text(root, "DetailText", 0.560, 0.080, 0.0, -0.170, "点击技能图标查看伤害、范围、冷却和说明。")
+    create_backdrop(root, "DetailBackground", BACKDROP_TEMPLATE, 0.620, 0.060, 0.0, -0.175, assets.PATHS.detail)
+    popup.detailText = create_text(root, "DetailText", 0.570, 0.054, 0.0, -0.175, color_text(TEXT_MUTED, "点击技能图标查看伤害、范围、冷却和说明。"))
 
-    create_backdrop(root, "RefreshBackground", BACKDROP_TEMPLATE, 0.170, 0.055, -0.125, -0.235, assets.PATHS.refresh)
-    popup.refreshText = create_text(root, "RefreshText", 0.145, 0.030, -0.125, -0.235, "刷新（0）")
-    popup.refreshButton = create_click_target(root, "RefreshButton", 0.170, 0.055, -0.125, -0.235, options.onRefresh, popup)
+    create_backdrop(root, "RefreshBackground", BACKDROP_TEMPLATE, 0.170, 0.052, -0.125, -0.240, assets.PATHS.refresh)
+    popup.refreshText = create_text(root, "RefreshText", 0.145, 0.028, -0.125, -0.240, color_text(TEXT_DISABLED, "刷新（0）"))
+    popup.refreshButton = create_click_target(root, "RefreshButton", 0.170, 0.052, -0.125, -0.240, options.onRefresh, popup)
 
-    create_backdrop(root, "ConfirmBackground", BACKDROP_TEMPLATE, 0.170, 0.055, 0.125, -0.235, assets.PATHS.confirm)
-    popup.confirmText = create_text(root, "ConfirmText", 0.145, 0.030, 0.125, -0.235, "确认选择")
-    popup.confirmButton = create_click_target(root, "ConfirmButton", 0.170, 0.055, 0.125, -0.235, options.onConfirm, popup)
+    create_backdrop(root, "ConfirmBackground", BACKDROP_TEMPLATE, 0.170, 0.052, 0.125, -0.240, assets.PATHS.confirm)
+    popup.confirmText = create_text(root, "ConfirmText", 0.145, 0.028, 0.125, -0.240, color_text(TEXT_DISABLED, "请选择英雄"))
+    popup.confirmButton = create_click_target(root, "ConfirmButton", 0.170, 0.052, 0.125, -0.240, options.onConfirm, popup)
 
     module.set_remaining_seconds(options.remainingSeconds)
     module.set_refresh_remaining(options.refreshRemaining)
@@ -318,7 +360,9 @@ function module.set_remaining_seconds(seconds)
         return
     end
 
-    frame.set_text(current_popup.timerText, string.format("%d 秒", math.max(seconds, 0)))
+    local remaining = math.max(seconds, 0)
+    local color = remaining <= 5 and TEXT_WARNING or TEXT_CYAN
+    frame.set_text(current_popup.timerText, color_text(color, string.format("%d 秒", remaining)))
 end
 
 --- 设置当前预选英雄的卡牌高亮。
@@ -353,8 +397,10 @@ function module.set_refresh_remaining(remaining)
         return
     end
 
-    frame.set_text(current_popup.refreshText, string.format("刷新（%d）", math.max(remaining, 0)))
-    frame.set_enabled(current_popup.refreshButton, remaining > 0)
+    local available = math.max(remaining, 0)
+    local color = available > 0 and TEXT_GOLD or TEXT_DISABLED
+    frame.set_text(current_popup.refreshText, color_text(color, string.format("刷新（%d）", available)))
+    frame.set_enabled(current_popup.refreshButton, available > 0)
 end
 
 --- 设置确认按钮是否可点击。
@@ -367,9 +413,9 @@ function module.set_confirm_enabled(enabled)
 
     frame.set_enabled(current_popup.confirmButton, enabled)
     if enabled then
-        frame.set_text(current_popup.confirmText, "确认选择")
+        frame.set_text(current_popup.confirmText, color_text(TEXT_GOLD, "确认选择"))
     else
-        frame.set_text(current_popup.confirmText, "请选择英雄")
+        frame.set_text(current_popup.confirmText, color_text(TEXT_DISABLED, "请选择英雄"))
     end
 end
 
