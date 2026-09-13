@@ -6,6 +6,7 @@ local hero_stats = require "hero.stats"
 local rogue_state = require "rogue.state"
 local gold = require "gold.main"
 local experience = require "experience.main"
+local special_spawn = require "monster.special_spawn"
 local attribute_config = require "config.attributes"
 
 local module = {}
@@ -126,7 +127,7 @@ local function get_skill_damage_bonus_percent(hero)
     return math.max(0, math.floor(intelligence_bonus + (tonumber(common_bonus) or 0)))
 end
 
-local function format_snapshot(snapshot, growth, gold_bonus, experience_snapshot, skill_damage_bonus)
+local function format_snapshot(snapshot, growth, gold_bonus, experience_snapshot, skill_damage_bonus, special_chances)
     local lines = {}
     local previous_group = nil
     for _, definition in ipairs(ordered_definitions()) do
@@ -172,6 +173,19 @@ local function format_snapshot(snapshot, growth, gold_bonus, experience_snapshot
         "金币掉落加成：|cff80ff80%s|r",
         format_gold_bonus(gold_bonus)
     ))
+    table.insert(lines, string.format(
+        "特殊怪生成概率加成：|cff80ff80+%d%%|r",
+        math.max(0, math.floor(tonumber(special_chances and special_chances.bonusPercent) or 0))
+    ))
+    table.insert(lines, string.format(
+        "普通怪召唤：金币怪 |cff80ff80%d%%|r / 经验怪 |cff80ff80%d%%|r",
+        math.max(0, math.floor(tonumber(special_chances and special_chances.normalGoldPercent) or 10)),
+        math.max(0, math.floor(tonumber(special_chances and special_chances.normalExperiencePercent) or 10))
+    ))
+    table.insert(lines, string.format(
+        "精英怪召唤：金币怪 |cff80ff80%d%%|r",
+        math.max(0, math.floor(tonumber(special_chances and special_chances.eliteGoldPercent) or 50))
+    ))
     return table.concat(lines, "|n")
 end
 
@@ -183,12 +197,14 @@ local function refresh_panel(snapshot)
     local gold_bonus = player_id ~= nil and gold.get_gold_bonus(player_id) or 0
     local experience_snapshot = experience.get_snapshot(active_hero)
     local skill_damage_bonus = get_skill_damage_bonus_percent(active_hero)
+    local special_chances = special_spawn.get_chances(player_id)
     frame.set_text(panel.content, format_snapshot(
         snapshot or hero_stats.get_snapshot(active_hero),
         growth,
         gold_bonus,
         experience_snapshot,
-        skill_damage_bonus
+        skill_damage_bonus,
+        special_chances
     ))
 end
 
@@ -286,6 +302,9 @@ function module.start(hero_results)
         if hero == active_hero then refresh_panel(snapshot) end
     end)
     gold.subscribe_gold_bonus(function(player_id)
+        if player_id == local_player_id() then refresh_panel() end
+    end)
+    special_spawn.subscribe(function(player_id)
         if player_id == local_player_id() then refresh_panel() end
     end)
     experience.subscribe(function(hero)

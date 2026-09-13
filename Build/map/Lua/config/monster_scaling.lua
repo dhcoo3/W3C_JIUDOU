@@ -834,6 +834,38 @@ return {
                 "ZD4Z",
             },
         },
+        ["G0M1"] = {
+            ["healthAbilities"] = {
+                "ZH50",
+                "ZH51",
+                "ZH52",
+                "ZH53",
+                "ZH54",
+            },
+            ["attackAbilities"] = {
+                "ZD50",
+                "ZD51",
+                "ZD52",
+                "ZD53",
+                "ZD54",
+            },
+        },
+        ["X0M1"] = {
+            ["healthAbilities"] = {
+                "ZH55",
+                "ZH56",
+                "ZH57",
+                "ZH58",
+                "ZH59",
+            },
+            ["attackAbilities"] = {
+                "ZD55",
+                "ZD56",
+                "ZD57",
+                "ZD58",
+                "ZD59",
+            },
+        },
     },
     ["armorAbilities"] = {
         "ZA00",

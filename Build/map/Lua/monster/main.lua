@@ -7,7 +7,9 @@ local monster_stats = require "platform.monster_stats"
 local damage_numbers = require "combat.damage_numbers"
 local gold = require "gold.main"
 local experience = require "experience.main"
+local special_spawn = require "monster.special_spawn"
 local cataclysm_ui = require "monster.ui.cataclysm"
+local special_count_ui = require "monster.ui.special_count"
 
 local module = {}
 
@@ -53,6 +55,8 @@ local scheduler_tick = 0
 local difficulty = nil
 local hero_results = {}
 local session_seed_value = nil
+local active_player_ids = {}
+local special_count = 0
 local initial_spawn_queue = {}
 local initial_spawn_index = 1
 local on_scheduler_tick
@@ -65,6 +69,10 @@ local boss_affix_effect_warning_printed = false
 local slots = {}
 ---@type table<unit, MonsterSlot>
 local slot_by_unit = {}
+---@type MonsterSlot[] 动态特殊怪槽位，按来源槽位/代数/类别/子序号稳定排序
+local special_slots = {}
+---@type table<unit, MonsterSlot>
+local special_slot_by_unit = {}
 
 local function rawcode_to_unit_id(rawcode)
     local first_byte, second_byte, third_byte, fourth_byte = string.byte(rawcode, 1, 4)
@@ -115,6 +123,25 @@ local function get_random_point(region, rng)
 
     print("警告：刷怪区域未找到可行走随机点，回退至中心：" .. region.name)
     return (region.minX + region.maxX) * 0.5, (region.minY + region.maxY) * 0.5
+end
+
+local function get_nearby_random_point(region, center_x, center_y, rng)
+    local inset = config.SETTINGS.pointInset
+    local minimum_x = math.ceil(region.minX + inset)
+    local maximum_x = math.floor(region.maxX - inset)
+    local minimum_y = math.ceil(region.minY + inset)
+    local maximum_y = math.floor(region.maxY - inset)
+    local radius = config.SETTINGS.specialMonsterSpawnRadius
+    for _ = 1, config.SETTINGS.randomPointAttempts do
+        local offset_x = random.next_integer(rng, -math.floor(radius), math.floor(radius))
+        local offset_y = random.next_integer(rng, -math.floor(radius), math.floor(radius))
+        local x = math.max(minimum_x, math.min(maximum_x, math.floor(center_x + offset_x)))
+        local y = math.max(minimum_y, math.min(maximum_y, math.floor(center_y + offset_y)))
+        if not jass.IsTerrainPathable(x, y, WALKABLE_PATHING) then
+            return x, y
+        end
+    end
+    return get_random_point(region, rng)
 end
 
 local function create_unit(rawcode, x, y, facing)
@@ -324,14 +351,34 @@ local function register_unit(slot, unit_handle, rawcode, x, y, facing, active_ab
     slot.eliteAbilityRawcode = elite_ability_rawcode
     slot.respawnTick = nil
     slot.generation = slot.generation + 1
-    slot_by_unit[unit_handle] = slot
+    if slot.kind == "special_gold" or slot.kind == "special_experience" then
+        special_slot_by_unit[unit_handle] = slot
+    else
+        slot_by_unit[unit_handle] = slot
+    end
     damage_numbers.register_target(unit_handle)
     local max_life = 1
     if type(jass.GetUnitState) == "function" and jass.UNIT_STATE_MAX_LIFE ~= nil then
         max_life = math.max(1, math.floor(tonumber(jass.GetUnitState(unit_handle, jass.UNIT_STATE_MAX_LIFE)) or 1))
     end
-    gold.register_monster(unit_handle, slot.kind, slot.blockId, slot.generation, max_life)
-    experience.register_monster(unit_handle, slot.kind, rawcode, slot.generation, max_life)
+    if slot.kind == "special_gold" then
+        gold.register_monster(unit_handle, "normal", slot.blockId, slot.generation, max_life)
+    elseif slot.kind == "special_experience" then
+        local block = config.get_block(slot.blockId)
+        local normal_exp = block and config.get_unit_experience_reward(block.normalMeleeRawcode) or 0
+        if normal_exp <= 0 then error("特殊经验怪出生区域缺少普通怪经验：区域=" .. tostring(slot.blockId)) end
+        experience.register_monster(
+            unit_handle,
+            "normal",
+            rawcode,
+            slot.generation,
+            max_life,
+            normal_exp * 2
+        )
+    else
+        gold.register_monster(unit_handle, slot.kind, slot.blockId, slot.generation, max_life)
+        experience.register_monster(unit_handle, slot.kind, rawcode, slot.generation, max_life)
+    end
 end
 
 local function spawn_normal(slot)
@@ -405,6 +452,171 @@ local function spawn_boss(slot)
     announce_boss_arrival(slot.rawcode)
 end
 
+local function special_slot_before(left, right)
+    if left.sourceSlotId ~= right.sourceSlotId then return left.sourceSlotId < right.sourceSlotId end
+    if left.sourceGeneration ~= right.sourceGeneration then return left.sourceGeneration < right.sourceGeneration end
+    if left.branchOrder ~= right.branchOrder then return left.branchOrder < right.branchOrder end
+    return left.childIndex < right.childIndex
+end
+
+local function new_special_slot(source_slot, special_kind, branch_order, child_index, region)
+    local stable_key = (
+        source_slot.id * 104729
+        + source_slot.generation * 13007
+        + branch_order * 997
+        + child_index * 31
+    ) % 1000000000
+    return {
+        id = source_slot.id,
+        kind = special_kind,
+        blockId = source_slot.blockId,
+        region = region,
+        rawcode = special_kind == "special_gold"
+            and config.SPECIAL_GOLD_RAWCODE
+            or config.SPECIAL_EXPERIENCE_RAWCODE,
+        unit = nil,
+        random = random.create(random.derive_seed(session_seed_value, 1000000000 + stable_key)),
+        affixRandom = random.create(random.derive_seed(session_seed_value, 2000000000 + stable_key)),
+        specialRandom = source_slot.specialRandom,
+        generation = 0,
+        respawnTick = nil,
+        expiresTick = scheduler_tick + seconds_to_ticks(config.SETTINGS.specialMonsterLifetimeSeconds),
+        sourceSlotId = source_slot.id,
+        sourceGeneration = source_slot.generation,
+        branchOrder = branch_order,
+        childIndex = child_index,
+        homeX = nil,
+        homeY = nil,
+        facing = nil,
+        activeAbilities = {},
+        nextAbilityIndex = 1,
+        nextCastAt = {},
+        currentTarget = nil,
+        elitePoint = nil,
+        eliteAbilityRawcode = nil,
+        affixId = nil,
+        affixAbilityRawcode = nil,
+        affixIndicatorAbilityRawcode = nil,
+        affixEffect = nil,
+    }
+end
+
+local function insert_special_slot(slot)
+    local insert_index = #special_slots + 1
+    for index, existing in ipairs(special_slots) do
+        if special_slot_before(slot, existing) then
+            insert_index = index
+            break
+        end
+    end
+    table.insert(special_slots, insert_index, slot)
+end
+
+local update_special_count
+
+local function remove_special_slot(slot, despawn_alive)
+    local unit_handle = slot.unit
+    if unit_handle ~= nil then
+        special_slot_by_unit[unit_handle] = nil
+        clear_boss_affix_effect(slot)
+        if despawn_alive and is_alive(unit_handle) then
+            gold.unregister_monster(unit_handle)
+            experience.unregister_monster(unit_handle)
+            if type(jass.RemoveUnit) == "function" then jass.RemoveUnit(unit_handle) end
+        end
+    end
+    slot.unit = nil
+    slot.currentTarget = nil
+    for index, existing in ipairs(special_slots) do
+        if existing == slot then
+            table.remove(special_slots, index)
+            break
+        end
+    end
+    special_count = math.max(0, special_count - 1)
+    update_special_count()
+end
+
+update_special_count = function()
+    special_count_ui.set_count(special_count)
+end
+
+local function spawn_special_pack(source_slot, pack, killer_player_id, death_x, death_y, region)
+    local rawcode
+    local unit_kind
+    local child_count
+    local branch_order
+    if pack == "gold" then
+        rawcode, unit_kind, child_count, branch_order = config.SPECIAL_GOLD_RAWCODE, "special_gold", 3, 1
+    elseif pack == "gold_elite" then
+        rawcode, unit_kind, child_count, branch_order = config.SPECIAL_GOLD_RAWCODE, "special_gold", 5, 3
+    else
+        rawcode, unit_kind, child_count, branch_order = config.SPECIAL_EXPERIENCE_RAWCODE, "special_experience", 3, 2
+    end
+    if special_count + child_count > config.SETTINGS.specialMonsterMaxAlive then
+        return false
+    end
+
+    for child_index = 1, child_count do
+        local x, y = get_nearby_random_point(region, death_x, death_y, source_slot.specialRandom)
+        local facing = random.next_integer(source_slot.specialRandom, 0, 359)
+        local slot = new_special_slot(source_slot, unit_kind, branch_order, child_index, region)
+        local unit_handle = create_unit(rawcode, x, y, facing)
+        if unit_handle == nil then error("特殊怪创建失败：" .. rawcode) end
+        register_unit(slot, unit_handle, rawcode, x, y, facing, {}, nil)
+        insert_special_slot(slot)
+        special_count = special_count + 1
+    end
+    update_special_count()
+    if pack == "experience" then
+        special_spawn.show_to_player(
+            killer_player_id,
+            "敌人在死亡时召唤了3只携带大量经验的恶魔。",
+            5.0
+        )
+    else
+        special_spawn.show_to_player(
+            killer_player_id,
+            string.format("敌人在死亡时召唤了%d只携带大量金钱的恶魔。", child_count),
+            5.0
+        )
+    end
+    return true
+end
+
+local function get_killer_player_id()
+    local killer = type(jass.GetKillingUnit) == "function" and jass.GetKillingUnit() or nil
+    if killer == nil or type(jass.GetOwningPlayer) ~= "function" or type(jass.GetPlayerId) ~= "function" then
+        return nil
+    end
+    local player_id = jass.GetPlayerId(jass.GetOwningPlayer(killer))
+    return active_player_ids[player_id] and player_id or nil
+end
+
+local function try_special_summons(source_slot, dying_unit)
+    if source_slot.kind ~= "normal" and source_slot.kind ~= "elite" then return end
+    local killer_player_id = get_killer_player_id()
+    local packs = special_spawn.roll_death(source_slot.kind, killer_player_id, source_slot.specialRandom)
+    if #packs == 0 then return end
+    local block = config.get_block(source_slot.blockId)
+    if block == nil then error("特殊怪出生区域配置缺失：" .. tostring(source_slot.blockId)) end
+    local death_x = jass.GetUnitX(dying_unit)
+    local death_y = jass.GetUnitY(dying_unit)
+    local capacity_blocked = false
+    for _, pack in ipairs(packs) do
+        if not spawn_special_pack(source_slot, pack, killer_player_id, death_x, death_y, block.region) then
+            capacity_blocked = true
+        end
+    end
+    if capacity_blocked then
+        special_spawn.show_to_player(
+            killer_player_id,
+            "特殊怪数量已达上限，无法容纳完整怪物包，本次召唤已跳过。",
+            5.0
+        )
+    end
+end
+
 local function new_slot(id, kind, block_id, region, session_seed)
     return {
         id = id,
@@ -415,6 +627,7 @@ local function new_slot(id, kind, block_id, region, session_seed)
         unit = nil,
         random = random.create(random.derive_seed(session_seed, id)),
         affixRandom = random.create(random.derive_seed(session_seed, 10000 + id)),
+        specialRandom = random.create(random.derive_seed(session_seed, 20000 + id)),
         generation = 0,
         respawnTick = nil,
         bossSpawnTick = nil,
@@ -437,6 +650,9 @@ end
 local function create_slots(session_seed)
     slots = {}
     slot_by_unit = {}
+    special_slots = {}
+    special_slot_by_unit = {}
+    special_count = 0
     local slot_id = 0
     for _, block in ipairs(config.BLOCKS) do
         for _ = 1, config.SETTINGS.normalCountPerBlock do
@@ -468,10 +684,16 @@ end
 
 local function on_monster_death()
     local dying_unit = jass.GetDyingUnit()
+    local special_slot = special_slot_by_unit[dying_unit]
+    if special_slot ~= nil then
+        remove_special_slot(special_slot, false)
+        return
+    end
     local slot = slot_by_unit[dying_unit]
     if slot == nil then
         return
     end
+    try_special_summons(slot, dying_unit)
     slot_by_unit[dying_unit] = nil
     clear_boss_affix_effect(slot)
     slot.unit = nil
@@ -561,9 +783,36 @@ local function update_ai()
             end
         end
     end
+    for _, slot in ipairs(special_slots) do
+        if is_alive(slot.unit) then
+            local target = find_target(slot, heroes)
+            if target == nil then
+                if slot.currentTarget ~= nil then
+                    jass.IssuePointOrder(slot.unit, "move", slot.homeX, slot.homeY)
+                    slot.currentTarget = nil
+                end
+            elseif slot.currentTarget ~= target then
+                jass.IssueTargetOrder(slot.unit, "attack", target)
+                slot.currentTarget = target
+            end
+        end
+    end
+end
+
+local function process_special_expirations()
+    local index = 1
+    while index <= #special_slots do
+        local slot = special_slots[index]
+        if slot.expiresTick ~= nil and slot.expiresTick <= scheduler_tick then
+            remove_special_slot(slot, true)
+        else
+            index = index + 1
+        end
+    end
 end
 
 local function process_due_spawns()
+    process_special_expirations()
     for _, slot in ipairs(slots) do
         if slot.kind == "boss" and slot.bossSpawnTick ~= nil and slot.bossSpawnTick <= scheduler_tick then
             slot.bossSpawnTick = nil
@@ -687,6 +936,7 @@ function module.get_state_summary()
     local normal_alive = 0
     local elite_alive = 0
     local boss_alive = 0
+    local special_alive = 0
     for _, slot in ipairs(slots) do
         if is_alive(slot.unit) then
             if slot.kind == "normal" then
@@ -698,7 +948,7 @@ function module.get_state_summary()
             end
         end
         local record = string.format(
-            "%d,%s,%d,%s,%.3f,%.3f,%.3f,%s,%s,%s,%s,%d,%d,%d,%d;",
+            "%d,%s,%d,%s,%.3f,%.3f,%.3f,%s,%s,%s,%s,%d,%d,%d,%d,%d;",
             slot.id,
             slot.kind,
             slot.generation,
@@ -713,18 +963,41 @@ function module.get_state_summary()
             slot.respawnTick or 0,
             slot.bossSpawnTick or 0,
             slot.random.state,
+            slot.affixRandom.state,
+            slot.specialRandom.state
+        )
+        hash = hash_text(record, hash)
+    end
+    for _, slot in ipairs(special_slots) do
+        if is_alive(slot.unit) then special_alive = special_alive + 1 end
+        local record = string.format(
+            "special,%d,%d,%d,%d,%s,%.3f,%.3f,%s,%s,%d,%d,%d;",
+            slot.sourceSlotId,
+            slot.sourceGeneration,
+            slot.branchOrder,
+            slot.childIndex,
+            slot.rawcode or "-",
+            slot.homeX or 0.0,
+            slot.homeY or 0.0,
+            slot.affixId or "-",
+            slot.affixAbilityRawcode or "-",
+            slot.expiresTick or 0,
+            slot.random.state,
             slot.affixRandom.state
         )
         hash = hash_text(record, hash)
     end
     return string.format(
-        "seed=%d,tick=%d,alive=%d/%d/%d,slots=%d,hash=%d",
+        "seed=%d,tick=%d,alive=%d/%d/%d,special=%d/%d,slots=%d+%d,hash=%d",
         session_seed_value or 0,
         scheduler_tick,
         normal_alive,
         elite_alive,
         boss_alive,
+        special_alive,
+        special_count,
         #slots,
+        #special_slots,
         hash
     )
 end
@@ -762,9 +1035,11 @@ function module.start(selection, selections, session_seed)
     difficulty = created_difficulty
     session_seed_value = math.floor(session_seed)
     hero_results = {}
+    active_player_ids = {}
     for _, result in ipairs(selections or {}) do
         if result.unit ~= nil then
             table.insert(hero_results, result)
+            active_player_ids[result.playerId] = true
         end
     end
     table.sort(hero_results, function(left, right)
@@ -772,7 +1047,13 @@ function module.start(selection, selections, session_seed)
     end)
 
     scheduler_tick = 0
+    if not special_spawn.start(hero_results) then
+        print("PVE 刷怪系统启动失败：特殊怪生成概率接口未能启动")
+        return false
+    end
     create_slots(session_seed)
+    special_count_ui.start(config.SETTINGS.specialMonsterMaxAlive)
+    update_special_count()
     death_trigger = jass.CreateTrigger()
     jass.TriggerRegisterPlayerUnitEvent(
         death_trigger,

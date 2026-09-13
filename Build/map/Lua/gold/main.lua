@@ -240,6 +240,15 @@ function module.register_monster(unit_handle, kind, level, generation, max_life)
     return true
 end
 
+--- 清理自然到期移除的怪物注册信息；不会结算金币。
+---@param unit_handle unit 怪物句柄
+---@return boolean removed 是否存在并已移除
+function module.unregister_monster(unit_handle)
+    if unit_handle == nil or monster_by_unit[unit_handle] == nil then return false end
+    monster_by_unit[unit_handle] = nil
+    return true
+end
+
 function module.get(player_id)
     return get_native_gold(player_id)
 end

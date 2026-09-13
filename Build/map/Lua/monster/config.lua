@@ -70,6 +70,9 @@ local module = {}
 ---@field randomPointAttempts integer 寻找可行走随机点的最大次数
 ---@field pointInset number 随机点与区域边缘保持的最小距离
 ---@field maxPlayerCount integer 参与 PVE 的最大玩家数量
+---@field specialMonsterMaxAlive integer 全图特殊怪同时存活上限
+---@field specialMonsterLifetimeSeconds number 特殊怪自然移除时间
+---@field specialMonsterSpawnRadius number 特殊怪相对死亡点的最大偏移距离
 ---@type MonsterSettings
 module.SETTINGS = {
     normalCountPerBlock = 50,
@@ -87,6 +90,9 @@ module.SETTINGS = {
     randomPointAttempts = 32,
     pointInset = 32.0,
     maxPlayerCount = 10,
+    specialMonsterMaxAlive = 300,
+    specialMonsterLifetimeSeconds = 20.0,
+    specialMonsterSpawnRadius = 300.0,
 }
 
 local function require_region(name)
@@ -115,6 +121,9 @@ local function normalize_integer(value, fallback)
     end
     return fallback
 end
+
+module.SPECIAL_GOLD_RAWCODE = require_unit("G0M1")
+module.SPECIAL_EXPERIENCE_RAWCODE = require_unit("X0M1")
 
 ---@class MonsterDifficulty
 ---@field modeId integer PVE 模式编号
@@ -221,6 +230,13 @@ for boss_index = 1, #module.BOSS_POINTS do
                 )
             end
         end
+        for _, unit_rawcode in ipairs({ module.SPECIAL_GOLD_RAWCODE, module.SPECIAL_EXPERIENCE_RAWCODE }) do
+            validate_affix_ability_list(
+                affix,
+                affix.unitAbilities[unit_rawcode],
+                affix_id .. "/" .. unit_rawcode
+            )
+        end
     else
         error("Boss 词缀缺少技能映射：" .. affix_id)
     end
@@ -308,6 +324,15 @@ function module.get_unit_name(rawcode)
         return nil
     end
     return unit.Name
+end
+
+--- 读取怪物物编中的基础经验；特殊经验怪使用其出生区域普通怪经验覆盖此值。
+---@param rawcode string 单位 Rawcode
+---@return integer experience 基础经验
+function module.get_unit_experience_reward(rawcode)
+    local unit = units[rawcode]
+    if unit == nil then return 0 end
+    return math.max(0, normalize_integer(unit.expReward, 0))
 end
 
 --- 获取指定存活 Boss 对应的天灾词缀。

@@ -253,6 +253,12 @@ function Get-MonsterUnitRawcodes {
             $rawcodes.Add($rawcode)
         }
     }
+    foreach ($rawcode in @('G0M1', 'X0M1')) {
+        if (-not $Units.Contains($rawcode)) {
+            throw "刷怪系统缺少特殊怪单位：$rawcode"
+        }
+        $rawcodes.Add($rawcode)
+    }
     return $rawcodes.ToArray()
 }
 
@@ -279,6 +285,12 @@ function Validate-MonsterExperience {
 
     foreach ($rawcode in Get-MonsterUnitRawcodes $Units) {
         $experience = Get-RequiredUnitInteger $Units[$rawcode] $rawcode 'expReward'
+        if ($rawcode -eq 'G0M1') {
+            if ($experience -ne 0) {
+                throw "金币怪不得配置经验奖励：$rawcode.expReward"
+            }
+            continue
+        }
         if ($experience -le 0) {
             throw "刷怪单位经验必须为正整数：$rawcode.expReward"
         }
@@ -1322,7 +1334,7 @@ function New-MonsterScalingData {
         $armorAbilities.Add($armorRawcode)
     }
 
-    if ($unitIndex -ne 36 -or $abilitySections.Count -ne 365) {
+    if ($unitIndex -ne 38 -or $abilitySections.Count -ne 385) {
         throw "隐藏属性技能生成数量异常：单位=$unitIndex，技能=$($abilitySections.Count)"
     }
     return [ordered]@{
@@ -1515,10 +1527,36 @@ function New-BossAffixData {
             $minionRawcodes.Add($rawcode)
         }
     }
+    foreach ($rawcode in @('G0M1', 'X0M1')) {
+        if (-not $Units.Contains($rawcode)) {
+            throw "Boss 词缀引用的特殊怪单位不存在：$rawcode"
+        }
+        $minionRawcodes.Add($rawcode)
+    }
+    $specialMinionRawcodes = @('G0M1', 'X0M1')
+    $legacyMinionRawcodeCount = $minionRawcodes.Count - $specialMinionRawcodes.Count
+    $legacyGeneratedCount = 0
+    $specialGeneratedCount = 0
+    foreach ($plannedAffixId in $expectedKinds.Keys) {
+        if (-not $AffixTable.Sections.Contains($plannedAffixId)) {
+            throw "Boss 词缀配置缺失：$plannedAffixId"
+        }
+        $plannedKind = [string]$AffixTable.Sections[$plannedAffixId].kind
+        $plannedUnitSpecific = ($plannedKind -eq 'damage_percent' -or $plannedKind -eq 'health_percent')
+        if ($plannedUnitSpecific) {
+            $legacyGeneratedCount = $legacyGeneratedCount + ($legacyMinionRawcodeCount * 5)
+            $specialGeneratedCount = $specialGeneratedCount + ($specialMinionRawcodes.Count * 5)
+        } else {
+            $legacyGeneratedCount = $legacyGeneratedCount + 5
+        }
+    }
 
     $abilitySections = [ordered]@{}
     $affixes = [ordered]@{}
     $rawcodeIndex = 0
+    $specialRawcodeIndex = 0
+    $unitSpecificAffixCount = 0
+    $globalAffixCount = 0
     foreach ($affixId in $expectedKinds.Keys) {
         if (-not $AffixTable.Sections.Contains($affixId)) {
             throw "Boss 词缀配置缺失：$affixId"
@@ -1555,6 +1593,8 @@ function New-BossAffixData {
         }
 
         $isUnitSpecific = ([string]$definition.kind -eq 'damage_percent' -or [string]$definition.kind -eq 'health_percent')
+        if ($isUnitSpecific) { $unitSpecificAffixCount = $unitSpecificAffixCount + 1 }
+        else { $globalAffixCount = $globalAffixCount + 1 }
         $affixEntry = [ordered]@{
             affixId = $affixId
             bossRawcode = [string]$definition.bossRawcode
@@ -1582,8 +1622,14 @@ function New-BossAffixData {
                     $dataAValues.Add((Get-BossAffixDataAValue $definition $profile $unit $targetRawcode))
                     $durationValues.Add((Get-BossAffixDurationValue $definition $profile))
                 }
-                $rawcode = 'ZB' + (ConvertTo-Base36Pair $rawcodeIndex)
-                $rawcodeIndex = $rawcodeIndex + 1
+                if ($targetRawcode -in $specialMinionRawcodes) {
+                    $generatedRawcodeIndex = $legacyGeneratedCount + $specialRawcodeIndex
+                    $specialRawcodeIndex = $specialRawcodeIndex + 1
+                } else {
+                    $generatedRawcodeIndex = $rawcodeIndex
+                    $rawcodeIndex = $rawcodeIndex + 1
+                }
+                $rawcode = 'ZB' + (ConvertTo-Base36Pair $generatedRawcodeIndex)
                 if ($ExistingAbilities.Contains($rawcode) -or $abilitySections.Contains($rawcode)) {
                     throw "Boss 词缀技能 Rawcode 冲突：$rawcode"
                 }
@@ -1640,8 +1686,11 @@ function New-BossAffixData {
         $affixes[$affixId] = $affixEntry
     }
 
-    $expectedAbilityCount = 305 + $expectedKinds.Count
-    if ($abilitySections.Count -ne $expectedAbilityCount -or $rawcodeIndex -ne 305) {
+    $expectedLegacyGeneratedCount = ($unitSpecificAffixCount * $legacyMinionRawcodeCount + $globalAffixCount) * 5
+    $expectedSpecialGeneratedCount = $unitSpecificAffixCount * $specialMinionRawcodes.Count * 5
+    $expectedGeneratedCount = $expectedLegacyGeneratedCount + $expectedSpecialGeneratedCount
+    $expectedAbilityCount = $expectedGeneratedCount + $expectedKinds.Count
+    if ($abilitySections.Count -ne $expectedAbilityCount -or $rawcodeIndex -ne $expectedLegacyGeneratedCount -or $specialRawcodeIndex -ne $expectedSpecialGeneratedCount) {
         throw "Boss 词缀技能生成数量异常：技能=$($abilitySections.Count)，索引=$rawcodeIndex"
     }
     return [ordered]@{
@@ -1662,6 +1711,7 @@ function Apply-CombatUnitTypeOverrides {
     foreach ($rawcode in $UnitTable.Sections.Keys) {
         $isCombatUnit = (
             $rawcode -eq 'u0W1' -or
+            $rawcode -in @('G0M1', 'X0M1') -or
             $rawcode -match '^H[0-9A-Z]{3}$' -or
             $rawcode -match '^[NEB][0-9A-Z]{3}$'
         )
@@ -1677,6 +1727,7 @@ function Assert-CombatUnitTypes {
     foreach ($rawcode in $Units.Keys) {
         $isCombatUnit = (
             $rawcode -eq 'u0W1' -or
+            $rawcode -in @('G0M1', 'X0M1') -or
             $rawcode -match '^H[0-9A-Z]{3}$' -or
             $rawcode -match '^[NEB][0-9A-Z]{3}$'
         )

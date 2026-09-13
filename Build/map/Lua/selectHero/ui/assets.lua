@@ -14,7 +14,7 @@ local IMPORT_ROOT = "ui\\selectHero\\"
 ---@field confirm string 确认按钮贴图
 ---@type HeroSelectAssetPaths
 module.PATHS = {
-    panel = IMPORT_ROOT .. "panel-v2.blp",
+    panel = IMPORT_ROOT .. "panel-v4.blp",
     cardNormal = IMPORT_ROOT .. "card-normal-v2.blp",
     cardSelected = IMPORT_ROOT .. "card-selected-v3.blp",
     detail = IMPORT_ROOT .. "skill-detail-v2.blp",

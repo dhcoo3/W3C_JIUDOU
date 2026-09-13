@@ -220,7 +220,7 @@ end
 
 local function settle_monster(info)
     if not sync.is_host() then return end
-    local base_exp = formula.base_reward(units, info.rawcode)
+    local base_exp = info.baseExpOverride or formula.base_reward(units, info.rawcode)
     local pool = formula.calculate_pool(base_exp, difficulty_multiplier_percent)
     if pool <= 0 then return end
 
@@ -274,9 +274,10 @@ end
 ---@param generation integer 当前刷怪代数
 ---@param max_life integer 难度缩放后的最大生命
 ---@return boolean registered 是否注册成功
-function module.register_monster(unit_handle, kind, rawcode, generation, max_life)
+function module.register_monster(unit_handle, kind, rawcode, generation, max_life, base_exp_override)
     if not started or unit_handle == nil or type(rawcode) ~= "string" then return false end
-    local base_exp = formula.base_reward(units, rawcode)
+    local base_exp = math.max(0, math.floor(tonumber(base_exp_override) or 0))
+    if base_exp <= 0 then base_exp = formula.base_reward(units, rawcode) end
     if base_exp <= 0 then
         print("经验系统拒绝注册无效怪物经验：" .. rawcode)
         return false
@@ -284,12 +285,22 @@ function module.register_monster(unit_handle, kind, rawcode, generation, max_lif
     monster_by_unit[unit_handle] = {
         kind = kind,
         rawcode = rawcode,
+        baseExpOverride = base_exp_override ~= nil and base_exp or nil,
         generation = math.max(1, math.floor(tonumber(generation) or 1)),
         maxLife = math.max(1, math.floor(tonumber(max_life) or 1)),
         recordedDamage = 0,
         contributions = {},
         settled = false,
     }
+    return true
+end
+
+--- 清理自然到期移除的怪物注册信息；不会结算经验。
+---@param unit_handle unit 怪物句柄
+---@return boolean removed 是否存在并已移除
+function module.unregister_monster(unit_handle)
+    if unit_handle == nil or monster_by_unit[unit_handle] == nil then return false end
+    monster_by_unit[unit_handle] = nil
     return true
 end
 
