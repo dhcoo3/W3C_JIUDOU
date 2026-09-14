@@ -16,6 +16,10 @@ local function normalize_multiplier(multiplier_tenth)
     return math.max(0, math.floor(tonumber(multiplier_tenth) or 0))
 end
 
+local function normalize_multiplier_hundredth(multiplier_hundredth)
+    return math.max(0, math.floor(tonumber(multiplier_hundredth) or 0))
+end
+
 --- 取得公式使用的属性最终值。primary 会解析为英雄当前主属性。
 ---@param hero unit
 ---@param attribute_id string
@@ -65,6 +69,20 @@ function module.calculate(hero, attribute_id, multiplier_tenth, percent_bonus)
         module.calculate_base(hero, attribute_id or "primary", multiplier_tenth),
         module.get_percent_bonus(hero, percent_bonus)
     )
+end
+
+---以百分位定点倍率结算小数伤害；15 表示 0.15×主属性。
+---@param hero unit
+---@param attribute_id string
+---@param multiplier_hundredth integer
+---@param percent_bonus integer|nil
+---@return integer damage
+function module.calculate_hundredth(hero, attribute_id, multiplier_hundredth, percent_bonus)
+    local base = math.floor(
+        module.get_attribute_value(hero, attribute_id or "primary")
+            * normalize_multiplier_hundredth(multiplier_hundredth) / 100
+    )
+    return module.apply_percent_bonus(base, module.get_percent_bonus(hero, percent_bonus))
 end
 
 ---@param multiplier_tenth integer

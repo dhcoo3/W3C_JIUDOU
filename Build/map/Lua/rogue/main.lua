@@ -8,6 +8,7 @@ local attribute = require "rogue.attribute"
 local popup = require "rogue.ui.popup"
 local hero_stats = require "hero.stats"
 local wukong = require "rogue.skills.wukong"
+local arthas = require "rogue.skills.arthas"
 local hero_damage = require "rogue.skills.hero_damage"
 local debug = require "rogue.debug"
 
@@ -281,13 +282,31 @@ open_next_offer = function(state)
     ))
 end
 
+--- 计算从 previous_level 提升到 new_level 期间跨过的奖励等级数量。
+--- 首次奖励等级和奖励间隔均由 roguelike.xlsx/settings 配置；间隔为 1 时保持每级奖励的旧行为。
+local function get_level_reward_count(previous_level, new_level)
+    local first_level = math.max(1, config.data.settings.firstRewardLevel or 1)
+    local interval = math.max(1, config.data.settings.rewardLevelInterval or 1)
+
+    if new_level < first_level then return 0 end
+
+    local next_reward_level = first_level
+    if next_reward_level <= previous_level then
+        local passed_reward_count = math.floor((previous_level - next_reward_level) / interval) + 1
+        next_reward_level = next_reward_level + passed_reward_count * interval
+    end
+    if next_reward_level > new_level then return 0 end
+
+    return math.floor((new_level - next_reward_level) / interval) + 1
+end
+
 local function on_hero_level(hero)
     local state = state_store.get_by_hero(hero)
     if state == nil then return end
     local new_level = jass.GetHeroLevel(hero)
     if new_level <= state.lastObservedHeroLevel then return end
-    local first_level = math.max(state.lastObservedHeroLevel + 1, config.data.settings.firstRewardLevel)
-    if new_level >= first_level then state.pendingRewards = state.pendingRewards + new_level - first_level + 1 end
+    local reward_count = get_level_reward_count(state.lastObservedHeroLevel, new_level)
+    if reward_count > 0 then state.pendingRewards = state.pendingRewards + reward_count end
     state.lastObservedHeroLevel = new_level
     attribute.refresh(state)
     open_next_offer(state)
@@ -349,6 +368,7 @@ function module.start(hero_results, seed)
     register_level_events()
     start_countdown()
     wukong.start(hero_results or {}, session_seed)
+    arthas.start(hero_results or {})
     hero_damage.start(hero_results or {}, session_seed)
     debug.start(module)
     print(string.format("肉鸽系统已启动：玩家=%d，同步=%s", count_states(), tostring(sync_available)))

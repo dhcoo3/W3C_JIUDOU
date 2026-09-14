@@ -1,4 +1,4 @@
---- 哪吒、牛魔王、二郎神的主属性伤害结算。
+--- 哪吒、牛魔王的主属性伤害结算。
 --- 原生技能仅保留位移、减速、眩晕等非伤害效果；伤害统一由本模块按倍率计算。
 local jass = require "jass.common"
 local config = require "rogue.config"
@@ -20,7 +20,6 @@ local now = 0
 local MODULUS = 2147483647
 local N1_ID, N2_ID, N4_ID = nil, nil, nil
 local B1_ID, B4_ID = nil, nil
-local E1_ID, E4_ID = nil, nil
 
 local function rawcode_to_integer(rawcode)
     if type(rawcode) ~= "string" or #rawcode ~= 4 then return nil end
@@ -151,10 +150,6 @@ local function cast_spell(hero, hero_rawcode, ability_id)
         local level = ability_level(hero, B1_ID)
         local amount = scaled_damage(hero, hero_rawcode, "A0B1", "", level)
         damage_area(hero, jass.GetUnitX(hero), jass.GetUnitY(hero), 250, amount)
-    elseif hero_rawcode == "H0E0" and ability_id == E1_ID then
-        local level = ability_level(hero, E1_ID)
-        local target = type(jass.GetSpellTargetUnit) == "function" and jass.GetSpellTargetUnit() or nil
-        damage(hero, target, scaled_damage(hero, hero_rawcode, "A0E1", "", level))
     end
 end
 
@@ -165,16 +160,6 @@ local function proc_attack(hero, hero_rawcode, target)
         local runtime = config.get_skill_runtime(hero_rawcode, "A0N4")
         if deterministic_percent(hero, 41) <= list_value(runtime.procChance, level) then
             damage(hero, target, scaled_damage(hero, hero_rawcode, "A0N4", "proc", level), jass.DAMAGE_TYPE_NORMAL)
-        end
-    elseif hero_rawcode == "H0E0" then
-        local level = ability_level(hero, E4_ID)
-        if level <= 0 then return end
-        local runtime = config.get_skill_runtime(hero_rawcode, "A0E4")
-        local state = state_for(hero)
-        local cooldown = math.max(0, tonumber(runtime.procCooldown) or 0)
-        if now >= (state.cooldowns.A0E4 or 0) and deterministic_percent(hero, 47) <= list_value(runtime.procChance, level) then
-            damage(hero, target, scaled_damage(hero, hero_rawcode, "A0E4", "proc", level))
-            state.cooldowns.A0E4 = now + cooldown
         end
     end
 end
@@ -220,9 +205,9 @@ function module.start(hero_results, seed)
     session_seed = math.max(1, math.floor(tonumber(seed) or 1))
     N1_ID, N2_ID, N4_ID = rawcode_to_integer("A0N1"), rawcode_to_integer("A0N2"), rawcode_to_integer("A0N4")
     B1_ID, B4_ID = rawcode_to_integer("A0B1"), rawcode_to_integer("A0B4")
-    E1_ID, E4_ID = rawcode_to_integer("A0E1"), rawcode_to_integer("A0E4")
     for _, result in ipairs(hero_results or {}) do
-        if result.unit ~= nil and result.hero and result.hero.rawcode ~= "H0W0" then
+        if result.unit ~= nil and result.hero
+            and result.hero.rawcode ~= "H0W0" and result.hero.rawcode ~= "H0E0" then
             heroes[result.unit] = result.hero.rawcode
             state_for(result.unit)
         end

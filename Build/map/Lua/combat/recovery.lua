@@ -9,6 +9,28 @@ local function clamp_percent(value)
     return math.max(0, math.floor(tonumber(value) or 0))
 end
 
+local function current_life(unit_handle)
+    if type(jass.GetWidgetLife) == "function" then
+        return math.max(0, tonumber(jass.GetWidgetLife(unit_handle)) or 0)
+    end
+    if type(jass.GetUnitState) == "function" and jass.UNIT_STATE_LIFE ~= nil then
+        return math.max(0, tonumber(jass.GetUnitState(unit_handle, jass.UNIT_STATE_LIFE)) or 0)
+    end
+    return nil
+end
+
+local function write_life(unit_handle, target)
+    if type(jass.SetWidgetLife) == "function" then
+        jass.SetWidgetLife(unit_handle, target)
+        return true
+    end
+    if type(jass.SetUnitState) == "function" and jass.UNIT_STATE_LIFE ~= nil then
+        jass.SetUnitState(unit_handle, jass.UNIT_STATE_LIFE, target)
+        return true
+    end
+    return false
+end
+
 ---@param hero unit
 ---@param multiplier_tenth integer
 ---@param recovery_bonus integer|nil 恢复百分比加成
@@ -23,33 +45,35 @@ end
 ---@param amount integer
 ---@return boolean applied
 function module.apply_fixed(hero, amount)
-    if hero == nil or type(jass.GetUnitState) ~= "function" or type(jass.SetUnitState) ~= "function"
-        or jass.UNIT_STATE_LIFE == nil or jass.UNIT_STATE_MAX_LIFE == nil then
+    if hero == nil or type(jass.GetUnitState) ~= "function" or jass.UNIT_STATE_MAX_LIFE == nil then
         return false
     end
     amount = math.max(0, math.floor(tonumber(amount) or 0))
     if amount <= 0 then return false end
-    local current = math.max(0, tonumber(jass.GetUnitState(hero, jass.UNIT_STATE_LIFE)) or 0)
+    local current = current_life(hero)
     local maximum = math.max(0, tonumber(jass.GetUnitState(hero, jass.UNIT_STATE_MAX_LIFE)) or 0)
-    if maximum <= 0 then return false end
-    jass.SetUnitState(hero, jass.UNIT_STATE_LIFE, math.min(maximum, current + amount))
-    return true
+    if current == nil or maximum <= current then return false end
+    local target = math.min(maximum, current + amount)
+    if target <= current or not write_life(hero, target) then return false end
+    local actual = current_life(hero)
+    return actual ~= nil and actual > current + 0.001
 end
 
 ---@param hero unit
 ---@param percent integer
 ---@return boolean applied
 function module.apply_percent(hero, percent)
-    if hero == nil or type(jass.GetUnitState) ~= "function" or type(jass.SetUnitState) ~= "function"
-        or jass.UNIT_STATE_LIFE == nil or jass.UNIT_STATE_MAX_LIFE == nil then
+    if hero == nil or type(jass.GetUnitState) ~= "function" or jass.UNIT_STATE_MAX_LIFE == nil then
         return false
     end
     local maximum = math.max(0, tonumber(jass.GetUnitState(hero, jass.UNIT_STATE_MAX_LIFE)) or 0)
-    local current = math.max(0, tonumber(jass.GetUnitState(hero, jass.UNIT_STATE_LIFE)) or 0)
-    if maximum <= 0 then return false end
+    local current = current_life(hero)
+    if current == nil or maximum <= current then return false end
     local amount = math.floor(maximum * clamp_percent(percent) / 100)
-    jass.SetUnitState(hero, jass.UNIT_STATE_LIFE, math.min(maximum, current + amount))
-    return true
+    local target = math.min(maximum, current + amount)
+    if target <= current or not write_life(hero, target) then return false end
+    local actual = current_life(hero)
+    return actual ~= nil and actual > current + 0.001
 end
 
 return module

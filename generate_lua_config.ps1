@@ -348,10 +348,10 @@ function Validate-MonsterExperience {
             throw "每阶必须恰有 60 个普通怪/精英难度变体：阶数=$tier / 实际=$($tierVariantCounts[[string]$tier])"
         }
     }
-    # The generated summon is injected by Apply-RoguelikeObjectOverrides after
-    # reading the six non-PVE rows from unit.xlsx.
-    if ($Units.Count -ne 767 -or ($Units.Count - $variantCount) -ne 7 -or -not $Units.Contains('u0W1')) {
-        throw "单位表应包含 760 个 PVE 变体、6 个未扩展表格单位与生成召唤物 u0W1，实际单位数=$($Units.Count)"
+    # The six non-PVE rows, plus the Wukong and Arthas summon units, sit beside the PVE variants.
+    if ($Units.Count -ne 768 -or ($Units.Count - $variantCount) -ne 8 -or
+        -not $Units.Contains('u0W1') -or -not $Units.Contains('u0E1')) {
+        throw "单位表应包含 760 个 PVE 变体、6 个未扩展表格单位和 u0W1/u0E1 召唤物，实际单位数=$($Units.Count)"
     }
     foreach ($base in $baseRawcodes) {
         for ($mode = 1; $mode -le 2; $mode++) {
@@ -1497,7 +1497,7 @@ function Apply-CombatUnitTypeOverrides {
     # S0M1 等商店单位不属于战斗单位，保留其模板类型；u0W1 是战斗召唤物，纳入统一规则。
     foreach ($rawcode in $UnitTable.Sections.Keys) {
         $isCombatUnit = (
-            $rawcode -eq 'u0W1' -or
+            $rawcode -in @('u0W1', 'u0E1') -or
             $rawcode -in @('G0M1', 'X0M1') -or
             $UnitTable.Sections[$rawcode].Contains('baseUnitId') -or
             $rawcode -match '^H[0-9A-Z]{3}$' -or
@@ -1520,7 +1520,7 @@ function Assert-CombatUnitTypes {
 
     foreach ($rawcode in $Units.Keys) {
         $isCombatUnit = (
-            $rawcode -eq 'u0W1' -or
+            $rawcode -in @('u0W1', 'u0E1') -or
             $rawcode -in @('G0M1', 'X0M1') -or
             $Units[$rawcode].Contains('baseUnitId') -or
             $rawcode -match '^H[0-9A-Z]{3}$' -or
@@ -1572,22 +1572,94 @@ function Apply-RoguelikeObjectOverrides {
         if (-not $AbilityTable.Sections.Contains($rawcode)) { throw "伤害技能物编缺失：$rawcode" }
         $AbilityTable.Sections[$rawcode]['DataA'] = @(0, 0, 0)
     }
-    foreach ($rawcode in @('A0N4', 'A0B4', 'A0E4')) {
+    foreach ($rawcode in @('A0N4', 'A0B4')) {
         if (-not $AbilityTable.Sections.Contains($rawcode)) { throw "被动伤害技能物编缺失：$rawcode" }
         $AbilityTable.Sections[$rawcode]['DataA'] = @(0, 0)
         $AbilityTable.Sections[$rawcode]['DataB'] = @(0, 0)
         if ($AbilityTable.Sections[$rawcode].Contains('DataC')) { $AbilityTable.Sections[$rawcode]['DataC'] = @(0, 0) }
     }
+    foreach ($rawcode in @('A0E3', 'A0E4')) {
+        if (-not $AbilityTable.Sections.Contains($rawcode)) { throw "阿尔萨斯技能物编缺失：$rawcode" }
+    }
+    $AbilityTable.Sections['A0E3']['DataA'] = @(0, 0, 0)
+    $AbilityTable.Sections['A0E4']['DataA'] = @(0, 0)
+    $AbilityTable.Sections['A0E4']['Ubertip'] = '指定区域召唤食尸鬼协战。冷却：<A0E4,Cool1> / <A0E4,Cool2> 秒；耗魔：<A0E4,Cost1> / <A0E4,Cost2>。军团存在时再次按 R 可献祭最近的一只食尸鬼并恢复生命；献祭治疗受本次召唤的总量上限约束。'
+    $AbilityTable.Sections['A0E4']['Researchubertip'] = '指定区域召唤食尸鬼协战。冷却：<A0E4,Cool1> / <A0E4,Cool2> 秒；耗魔：<A0E4,Cost1> / <A0E4,Cost2>。军团存在时再次按 R 可献祭最近的一只食尸鬼并恢复生命。'
+    # A0E2 and A0E4 are both point-target Channel spells. They must not share
+    # the same base order ID or Warcraft may dispatch the click to the other spell.
+    $AbilityTable.Sections['A0E4']['DataF'] = @('carrionswarm', 'carrionswarm')
+    $AbilityTable.Sections['A0E4']['Order'] = 'carrionswarm'
+
+    # Frostmourne is resolved by Lua as a passive attack proc. Use Warcraft's
+    # hero passive base so the learned skill keeps a command-card button, while
+    # zeroing its native critical-strike data and overriding all visible text.
+    $AbilityTable.Sections['A0E3']['_parent'] = 'AOcr'
+    $AbilityTable.Sections['A0E3']['DataA'] = @(0, 0, 0)
+    $AbilityTable.Sections['A0E3']['DataB'] = @(0, 0, 0)
+    $AbilityTable.Sections['A0E3']['DataC'] = @(0, 0, 0)
+    $AbilityTable.Sections['A0E3']['Name'] = '霜之哀伤·饥渴'
+    $AbilityTable.Sections['A0E3']['Tip'] = '霜之哀伤·饥渴(|cffffcc00E|r)'
+    $AbilityTable.Sections['A0E3']['Ubertip'] = '普通攻击积攒魂魄，最多 5 层；6 秒未攻击则消退。满层后的下一次攻击触发强化斩击。当前层数显示在技能图标旁，并可在 Buff 栏看到状态图标。'
+    $AbilityTable.Sections['A0E3']['Researchtip'] = '学习霜之哀伤·饥渴(|cffffcc00E|r) - [等级 %d]'
+    $AbilityTable.Sections['A0E3']['Researchubertip'] = '普通攻击积攒魂魄，最多 5 层；6 秒未攻击则消退。满层后的下一次攻击触发强化斩击。'
+    $AbilityTable.Sections['A0E3']['Art'] = 'ui\selectHero\skills\a0e3.blp'
+    $AbilityTable.Sections['A0E3']['ResearchArt'] = 'ui\selectHero\skills\a0e3.blp'
     $AbilityTable.Sections['R0W3'] = [ordered]@{
         _parent = 'AOae'
         Name = '齐天战意状态'
         hero = 0
         item = 1
         levels = 1
+        Buttonpos_1 = 0
+        Buttonpos_2 = -11
         DataA = @(0)
         DataB = @(0)
         Area = @(1)
         BuffID = @('B0W1')
+    }
+    $AbilityTable.Sections['R0E3'] = [ordered]@{
+        _parent = 'AOae'
+        Name = '霜之哀伤魂魄状态'
+        hero = 0
+        item = 1
+        levels = 1
+        Buttonpos_1 = 0
+        Buttonpos_2 = -11
+        DataA = @(0)
+        DataB = @(0)
+        Area = @(1)
+        BuffID = @('B0E3')
+    }
+    $AbilityTable.Sections['R0E4'] = [ordered]@{
+        _parent = 'ANcl'
+        Name = '亡灵大军·血肉献祭'
+        Tip = '血肉献祭(|cffffcc00R|r)'
+        Ubertip = '献祭离阿尔萨斯最近的一只食尸鬼，恢复生命。冷却：<R0E4,Cool1> 秒。'
+        Researchtip = '学习亡灵大军(|cffffcc00R|r) - [等级 %d]'
+        Researchubertip = '献祭离阿尔萨斯最近的一只食尸鬼，恢复生命。'
+        Hotkey = 'R'
+        Researchhotkey = 'R'
+        Buttonpos_1 = 3
+        Buttonpos_2 = 2
+        Researchbuttonpos_1 = 3
+        Researchbuttonpos_2 = 2
+        hero = 0
+        item = 0
+        levels = 2
+        reqLevel = 4
+        levelSkip = 4
+        Cool = @(1, 1)
+        Cost = @(0, 0)
+        Rng = @(0, 0)
+        Area = @(0, 0)
+        DataA = @(0, 0)
+        DataB = @(0, 0)
+        DataC = @(0, 0)
+        DataD = @(0, 0)
+        DataE = @(0, 0)
+        DataF = @('roar', 'roar')
+        Order = 'roar'
+        Art = 'ui\selectHero\skills\a0e4.blp'
     }
 
     $UnitTable.Sections['u0W1'] = [ordered]@{
@@ -1634,6 +1706,11 @@ function Format-SkillDamageLines {
     return "$Prefix：" + [string]::Join('；', $lines.ToArray()) + '。'
 }
 
+function Format-HundredthMultiplier {
+    param([Parameter(Mandatory = $true)][int]$Value)
+    return '{0}.{1:D2}' -f [math]::Floor($Value / 100), [math]::Abs($Value % 100)
+}
+
 function Apply-SkillFormulaTooltips {
     param(
         [Parameter(Mandatory = $true)][object]$RoguelikeData,
@@ -1660,6 +1737,8 @@ function Apply-SkillFormulaTooltips {
                 $formula = Format-SkillDamageLines ([string]$runtime[$attributeKey]) @($runtime[$multiplierKey]) $prefix
             } elseif ($runtime.Contains('summonDamageAttribute') -and $runtime.Contains('summonDamageMultiplierTenth')) {
                 $formula = "猴兵每次攻击造成 $(Format-TenthMultiplier ([int]$runtime['summonDamageMultiplierTenth']))×$(Get-DamageAttributeLabel ([string]$runtime['summonDamageAttribute']))的物理伤害。"
+            } elseif ($runtime.Contains('summonDamageAttribute') -and $runtime.Contains('summonDamageMultiplierHundredth')) {
+                $formula = "食尸鬼每次攻击造成 $(Format-HundredthMultiplier ([int]$runtime['summonDamageMultiplierHundredth']))×$(Get-DamageAttributeLabel ([string]$runtime['summonDamageAttribute']))的物理伤害。"
             } else {
                 continue
             }
@@ -1697,10 +1776,10 @@ function New-RoguelikeConfig {
     }
     $settingsSource = $SettingsTable.Sections['DEFAULT']
     $settings = [ordered]@{}
-    foreach ($field in @('hostPlayerId', 'maxPlayerCount', 'firstRewardLevel', 'choiceCount', 'durationSeconds', 'freeRefreshPerOffer', 'maxEffectLevel')) {
+    foreach ($field in @('hostPlayerId', 'maxPlayerCount', 'firstRewardLevel', 'rewardLevelInterval', 'choiceCount', 'durationSeconds', 'freeRefreshPerOffer', 'maxEffectLevel')) {
         $settings[$field] = [int](Get-RoguelikeRequiredField $settingsSource $field 'settings/DEFAULT')
     }
-    if ($settings.choiceCount -ne 3 -or $settings.maxEffectLevel -ne 3 -or $settings.durationSeconds -lt 1 -or $settings.freeRefreshPerOffer -lt 0) {
+    if ($settings.firstRewardLevel -lt 1 -or $settings.rewardLevelInterval -lt 1 -or $settings.choiceCount -ne 3 -or $settings.maxEffectLevel -ne 3 -or $settings.durationSeconds -lt 1 -or $settings.freeRefreshPerOffer -lt 0) {
         throw 'roguelike.xlsx/settings 数值无效'
     }
 
@@ -1768,6 +1847,11 @@ function New-RoguelikeConfig {
             throw "孙悟空每个技能必须恰有两个肉鸽效果：$skill"
         }
     }
+    foreach ($skill in @('A0E1', 'A0E2', 'A0E3', 'A0E4')) {
+        if ([int]$skillCounts["H0E0`:$skill"] -ne 2) {
+            throw "阿尔萨斯每个技能必须恰有两个肉鸽效果：$skill"
+        }
+    }
     if ($commonIds.Count -ne 8) { throw "首版通用肉鸽必须恰有 8 个，实际=$($commonIds.Count)" }
 
     $skillRuntime = [ordered]@{}
@@ -1800,7 +1884,8 @@ function New-RoguelikeConfig {
         @{ hero = 'H0N0'; skill = 'A0N1'; prefix = '' }, @{ hero = 'H0N0'; skill = 'A0N2'; prefix = '' },
         @{ hero = 'H0N0'; skill = 'A0N4'; prefix = 'proc' }, @{ hero = 'H0B0'; skill = 'A0B1'; prefix = '' },
         @{ hero = 'H0B0'; skill = 'A0B4'; prefix = 'proc' }, @{ hero = 'H0E0'; skill = 'A0E1'; prefix = '' },
-        @{ hero = 'H0E0'; skill = 'A0E4'; prefix = 'proc' }
+        @{ hero = 'H0E0'; skill = 'A0E2'; prefix = '' }, @{ hero = 'H0E0'; skill = 'A0E3'; prefix = 'proc' },
+        @{ hero = 'H0E0'; skill = 'A0E4'; prefix = 'summon'; multiplierKey = 'summonDamageMultiplierHundredth'; multiplierScale = 100 }
     )
     foreach ($requirement in $formulaRequirements) {
         $hero = $requirement.hero
@@ -1812,6 +1897,7 @@ function New-RoguelikeConfig {
         if ($runtime.Contains('damage')) { throw "技能结算禁止保留固定 damage 数组：$hero/$skill" }
         $attributeKey = $requirement.prefix + 'DamageAttribute'
         $multiplierKey = $requirement.prefix + 'DamageMultiplierTenth'
+        if ($requirement.ContainsKey('multiplierKey')) { $multiplierKey = [string]$requirement.multiplierKey }
         if ($requirement.prefix -eq '') {
             $attributeKey = 'damageAttribute'
             $multiplierKey = 'damageMultiplierTenth'
@@ -1831,9 +1917,16 @@ function New-RoguelikeConfig {
             throw "技能伤害属性 ID 无效：$hero/$skill/$attributeKey"
         }
         $multipliers = $runtime[$multiplierKey]
-        if ($requirement.prefix -eq 'summon') {
+        $hundredthMultiplier = $requirement.ContainsKey('multiplierScale') -and [int]$requirement.multiplierScale -eq 100
+        if ($requirement.prefix -eq 'summon' -and -not $hundredthMultiplier) {
             if ($multipliers -is [System.Collections.IEnumerable] -or [int]$multipliers -le 0) {
                 throw "召唤伤害倍率必须为正整数十倍定点：$hero/$skill"
+            }
+            continue
+        }
+        if ($hundredthMultiplier) {
+            if ($multipliers -is [System.Collections.IEnumerable] -or [int]$multipliers -le 0) {
+                throw "食尸鬼伤害倍率必须为正整数百分位：$hero/$skill"
             }
             continue
         }
@@ -2050,6 +2143,29 @@ try {
         $attributeTable = Read-ExcelObjectTable $roguelikePath 'attributes' 'attributeId'
         $roguelikeData = New-RoguelikeConfig $roguelikeSettingsTable $roguelikeEffectsTable $roguelikeRuntimeTable $units (ConvertTo-ObjectConfig $abilityTable.Sections)
         Apply-SkillFormulaTooltips $roguelikeData $abilityTable
+        # AOcr stores its normal button text and extended tooltip per level.
+        # A scalar only replaces rank 1, leaving inherited Critical Strike text
+        # visible after the passive is upgraded.
+        $frostmourneTip = [string]$abilityTable.Sections['A0E3']['Tip']
+        $frostmourneUbertip = [string]$abilityTable.Sections['A0E3']['Ubertip']
+        $abilityTable.Sections['A0E3']['Tip'] = @($frostmourneTip, $frostmourneTip, $frostmourneTip)
+        $abilityTable.Sections['A0E3']['Ubertip'] = @($frostmourneUbertip, $frostmourneUbertip, $frostmourneUbertip)
+        $armyRuntime = $roguelikeData.lua.skillRuntime['H0E0']['A0E4']
+        if ($null -eq $armyRuntime -or -not $armyRuntime.Contains('summonCooldown') -or -not $armyRuntime.Contains('summonManaCost')) {
+            throw '阿尔萨斯亡灵大军缺少原生冷却或法力消耗配置：H0E0/A0E4'
+        }
+        $armyCooldowns = @($armyRuntime['summonCooldown'])
+        $armyManaCosts = @($armyRuntime['summonManaCost'])
+        $armyLevelCount = [int]$abilityTable.Sections['A0E4']['levels']
+        if ($armyCooldowns.Count -ne $armyLevelCount -or $armyManaCosts.Count -ne $armyLevelCount) {
+            throw "亡灵大军冷却和法力消耗配置必须与技能等级数一致：等级=$armyLevelCount / 冷却=$($armyCooldowns.Count) / 法力=$($armyManaCosts.Count)"
+        }
+        foreach ($value in $armyCooldowns) { if ([int]$value -lt 0) { throw '亡灵大军冷却不能为负数。' } }
+        foreach ($value in $armyManaCosts) { if ([int]$value -lt 0) { throw '亡灵大军法力消耗不能为负数。' } }
+        # Native fields control actual mana/cooldown; tooltip placeholders above
+        # read those same fields so future balance edits cannot desync the text.
+        $abilityTable.Sections['A0E4']['Cool'] = @($armyCooldowns)
+        $abilityTable.Sections['A0E4']['Cost'] = @($armyManaCosts)
         $attributeData = New-AttributeConfig $attributeTable
     } else {
         Write-Warning '缺少 excelCfg/roguelike.xlsx；保留当前已检入的 roguelike.ini 与 roguelike.lua。'

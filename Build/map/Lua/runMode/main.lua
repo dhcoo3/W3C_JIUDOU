@@ -228,9 +228,9 @@ function M.start()
         jass.DestroyTimer(startup_timer)
         local ok, message = pcall(function()
             sync_available = register_sync()
-            --if not bottom_hud.show() then
-            --    print("底部 HUD 启动失败：" .. bottom_hud.get_last_error())
-            --end
+            if not bottom_hud.show() then
+                print("主面板 启动失败：" .. bottom_hud.get_last_error())
+            end
             dialog.show_root(on_selection)
         end)
         if not ok then print("模式选择启动失败：" .. tostring(message)) end

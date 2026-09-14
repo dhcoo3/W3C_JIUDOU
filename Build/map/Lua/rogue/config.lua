@@ -13,6 +13,10 @@ function module.validate()
     local errors = {}
     if type(data.settings) ~= "table" or data.settings.choiceCount ~= 3 then
         table.insert(errors, "settings.choiceCount 必须为 3")
+    elseif not is_integer(data.settings.firstRewardLevel) or data.settings.firstRewardLevel < 1 then
+        table.insert(errors, "settings.firstRewardLevel 必须为不小于 1 的整数")
+    elseif not is_integer(data.settings.rewardLevelInterval) or data.settings.rewardLevelInterval < 1 then
+        table.insert(errors, "settings.rewardLevelInterval 必须为不小于 1 的整数")
     end
     local skill_counts = {}
     local common_count = 0
@@ -39,9 +43,14 @@ function module.validate()
             table.insert(errors, "效果类型无效：" .. tostring(effect_id))
         end
     end
-    for _, rawcode in ipairs({"A0W1", "A0W2", "A0W3", "A0W4"}) do
-        if skill_counts["H0W0:" .. rawcode] ~= 2 then
-            table.insert(errors, "悟空技能必须恰有两个肉鸽效果：" .. rawcode)
+    for _, hero_skills in ipairs({
+        {hero = "H0W0", name = "悟空", skills = {"A0W1", "A0W2", "A0W3", "A0W4"}},
+        {hero = "H0E0", name = "阿尔萨斯", skills = {"A0E1", "A0E2", "A0E3", "A0E4"}},
+    }) do
+        for _, rawcode in ipairs(hero_skills.skills) do
+            if skill_counts[hero_skills.hero .. ":" .. rawcode] ~= 2 then
+                table.insert(errors, hero_skills.name .. "技能必须恰有两个肉鸽效果：" .. rawcode)
+            end
         end
     end
     if common_count ~= 8 then table.insert(errors, "首版通用肉鸽必须恰有 8 个") end
@@ -67,6 +76,13 @@ function module.validate()
                             end
                         end
                     end
+                end
+            end
+            if runtime.summonDamageAttribute ~= nil or runtime.summonDamageMultiplierTenth ~= nil
+                or runtime.summonDamageMultiplierHundredth ~= nil then
+                local multiplier = runtime.summonDamageMultiplierTenth or runtime.summonDamageMultiplierHundredth
+                if not allowed_attributes[runtime.summonDamageAttribute] or not is_integer(multiplier) or multiplier <= 0 then
+                    table.insert(errors, "召唤伤害公式无效：" .. hero_rawcode .. "/" .. skill_rawcode)
                 end
             end
         end
@@ -96,7 +112,9 @@ function module.format_description(effect, level)
     local text = effect.description or ""
     text = string.gsub(text, "{value}", tostring(value))
     local tenth = string.format("%d.%d", math.floor(value / 10), math.abs(value % 10))
-    return string.gsub(text, "{value_tenth}", tenth)
+    text = string.gsub(text, "{value_tenth}", tenth)
+    text = string.gsub(text, "{value_hundredth}", string.format("%d.%02d", math.floor(value / 100), math.abs(value % 100)))
+    return text
 end
 
 return module

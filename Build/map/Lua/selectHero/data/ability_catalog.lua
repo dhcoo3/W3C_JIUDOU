@@ -35,10 +35,10 @@ local presentation_by_rawcode = {
     A0B2 = {damage = "无直接伤害", range = "350", cooldown = "18 / 16 / 14 秒"},
     A0B3 = {damage = "无直接伤害", range = "自身", cooldown = "被动"},
     A0B4 = {damage = "反击伤害由 Lua 结算", range = "自身", cooldown = "被动"},
-    A0E1 = {range = "单体", cooldown = "8 / 7 / 6 秒"},
-    A0E2 = {damage = "由 Lua 结算", range = "单体追猎", cooldown = "18 / 16 / 14 秒"},
-    A0E3 = {damage = "无直接伤害", range = "自身及周围", cooldown = "被动"},
-    A0E4 = {damage = "百分比伤害由 Lua 结算", range = "自身", cooldown = "被动"},
+    A0E1 = {damage = "按主属性结算；自身施放时恢复生命", range = "单体；肉鸽可弹射", cooldown = "8 / 7 / 6 秒"},
+    A0E2 = {damage = "伤害与控制由 Lua 结算", range = "区域 300；施法距离 700", cooldown = "14 / 12 / 10 秒"},
+    A0E3 = {damage = "满 5 层后强化下一次普攻", range = "自身普攻", cooldown = "被动"},
+    A0E4 = {damage = "食尸鬼伤害与献祭治疗由 Lua 结算", range = "区域召唤；再次按 R 献祭", cooldown = "45 / 40 秒；耗魔 120 / 150"},
 }
 
 local ATTRIBUTE_LABELS = {strength = "力量", agility = "敏捷", intelligence = "智力"}
