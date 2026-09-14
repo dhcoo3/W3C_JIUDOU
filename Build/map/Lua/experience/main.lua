@@ -20,7 +20,8 @@ local sync_available = false
 local death_trigger = nil
 local next_event_id = 0
 local last_applied_event_id = 0
-local difficulty_multiplier_percent = 100
+local difficulty_mode_id = 1
+local difficulty_level = 1
 local states_by_player = {}
 local states_by_hero = {}
 local hero_players = {}
@@ -220,8 +221,7 @@ end
 
 local function settle_monster(info)
     if not sync.is_host() then return end
-    local base_exp = info.baseExpOverride or formula.base_reward(units, info.rawcode)
-    local pool = formula.calculate_pool(base_exp, difficulty_multiplier_percent)
+    local pool = formula.base_reward(units, info.rawcode)
     if pool <= 0 then return end
 
     local awards = {}
@@ -272,12 +272,11 @@ end
 ---@param kind string normal、elite 或 boss
 ---@param rawcode string 怪物 Rawcode
 ---@param generation integer 当前刷怪代数
----@param max_life integer 难度缩放后的最大生命
+---@param max_life integer 当前 unit.xlsx 变体物编的最大生命
 ---@return boolean registered 是否注册成功
-function module.register_monster(unit_handle, kind, rawcode, generation, max_life, base_exp_override)
+function module.register_monster(unit_handle, kind, rawcode, generation, max_life)
     if not started or unit_handle == nil or type(rawcode) ~= "string" then return false end
-    local base_exp = math.max(0, math.floor(tonumber(base_exp_override) or 0))
-    if base_exp <= 0 then base_exp = formula.base_reward(units, rawcode) end
+    local base_exp = formula.base_reward(units, rawcode)
     if base_exp <= 0 then
         print("经验系统拒绝注册无效怪物经验：" .. rawcode)
         return false
@@ -285,7 +284,6 @@ function module.register_monster(unit_handle, kind, rawcode, generation, max_lif
     monster_by_unit[unit_handle] = {
         kind = kind,
         rawcode = rawcode,
-        baseExpOverride = base_exp_override ~= nil and base_exp or nil,
         generation = math.max(1, math.floor(tonumber(generation) or 1)),
         maxLife = math.max(1, math.floor(tonumber(max_life) or 1)),
         recordedDamage = 0,
@@ -380,7 +378,8 @@ function module.start(selection, hero_results)
         print("经验系统启动失败：没有有效玩家英雄")
         return false
     end
-    difficulty_multiplier_percent = math.max(0, math.floor(tonumber(difficulty.experienceMultiplierPercent) or 100))
+    difficulty_mode_id = difficulty.modeId
+    difficulty_level = difficulty.level
     sync_available = sync.start(on_sync_message)
     if not sync_available and #(hero_results or {}) > 1 then
         print("经验系统已禁用：多人模式缺少同步接口")
@@ -405,7 +404,7 @@ function module.start(selection, hero_results)
     jass.TriggerAddAction(death_trigger, on_unit_death)
     damage_service.subscribe(on_damage_report)
     started = true
-    print(string.format("经验系统已启动：英雄等级=%d，经验倍率=%d%%，玩家=%d", max_level(), difficulty_multiplier_percent, #hero_results))
+    print(string.format("经验系统已启动：英雄等级=%d，经验读取 unit.xlsx 最终变体，模式=%d，难度=%d，玩家=%d", max_level(), difficulty_mode_id, difficulty_level, #hero_results))
     return true
 end
 

@@ -18,10 +18,6 @@ function module.base_reward(units, rawcode)
     return non_negative(unit.expReward)
 end
 
-function module.calculate_pool(base_exp, difficulty_multiplier_percent)
-    return math.floor(non_negative(base_exp) * non_negative(difficulty_multiplier_percent) / 100)
-end
-
 function module.apply_bonus(amount, bonus_percent, max_bonus_percent)
     amount = non_negative(amount)
     bonus_percent = math.min(non_negative(bonus_percent), non_negative(max_bonus_percent))

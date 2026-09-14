@@ -1,7 +1,7 @@
 --- 中立敌对怪物死亡后的房主权威装备掉落。
 --- 掉落结果先同步完整实例，再由所有客户端在相同坐标创建相同道具。
 local jass = require "jass.common"
-local config = require "config.equipment"
+local units = require "config.units"
 local generator = require "equipment.generator"
 local instance = require "equipment.instance"
 
@@ -11,6 +11,7 @@ local sync_broadcast = nil
 local enabled = true
 local drop_sequence = 0
 local processed_uids = {}
+local rawcode_by_type_id = {}
 
 local NEUTRAL_HOSTILE_PLAYER_ID = 12
 
@@ -22,26 +23,45 @@ local function rawcode_to_id(rawcode)
     return a * 0x1000000 + b * 0x10000 + c * 0x100 + d
 end
 
+local function integer(value, fallback)
+    if type(value) == "table" then value = value[1] end
+    local number = tonumber(value)
+    if number == nil then return fallback or 0 end
+    return math.floor(number)
+end
+
+for rawcode, unit in pairs(units) do
+    if type(unit) == "table" and unit.baseUnitId ~= nil then
+        local type_id = rawcode_to_id(rawcode)
+        if type_id ~= nil then rawcode_by_type_id[type_id] = rawcode end
+    end
+end
+
 local function get_unit_rawcode(unit_handle)
     if unit_handle == nil or type(jass.GetUnitTypeId) ~= "function" then
         return nil
     end
     local type_id = jass.GetUnitTypeId(unit_handle)
-    for _, rule in pairs(config.drops or {}) do
-        if rawcode_to_id(rule.unitRawcode) == type_id then
-            return rule.unitRawcode
-        end
-    end
-    return nil
+    return rawcode_by_type_id[type_id]
 end
 
 local function find_rule(unit_rawcode)
-    for drop_id, rule in pairs(config.drops or {}) do
-        if rule.enabled == 1 and rule.unitRawcode == unit_rawcode then
-            return rule, drop_id
-        end
+    local unit = units[unit_rawcode]
+    if type(unit) ~= "table" then return nil, nil end
+    local chance = integer(unit.dropChancePercent, 0)
+    if chance <= 0 then return nil, nil end
+    local rule = {
+        poolId = unit.poolId,
+        levelMin = integer(unit.dropLevelMin, 0),
+        levelMax = integer(unit.dropLevelMax, 0),
+        chance = chance,
+        maxDrops = integer(unit.maxDrops, 1),
+    }
+    if type(rule.poolId) ~= "string" or rule.poolId == ""
+        or rule.levelMin < 1 or rule.levelMax < rule.levelMin or rule.maxDrops < 1 then
+        return nil, nil
     end
-    return nil, nil
+    return rule, "DROP_" .. unit_rawcode
 end
 
 local function join_passives(passives)

@@ -12,16 +12,10 @@ local function non_negative(value)
     return math.max(0, integer(value, 0))
 end
 
-function module.base_reward(config, kind, level)
-    local rewards = config and config.rewards and config.rewards[kind]
-    if type(rewards) ~= "table" then return 0 end
-    return non_negative(rewards[tostring(integer(level, 0))])
-end
-
-function module.calculate_pool(config, kind, level, difficulty_multiplier_percent)
-    local base = module.base_reward(config, kind, level)
-    local multiplier = non_negative(difficulty_multiplier_percent)
-    return math.floor(base * multiplier / 100)
+function module.base_reward(units, rawcode)
+    local unit = units and units[rawcode]
+    if type(unit) ~= "table" then return 0 end
+    return non_negative(unit.goldRep)
 end
 
 function module.apply_bonus(amount, bonus_percent, max_bonus_percent)

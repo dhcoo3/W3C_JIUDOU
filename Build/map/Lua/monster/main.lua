@@ -1,9 +1,8 @@
 --- PVE 刷怪业务入口。
---- 负责基于同步种子确定性生成怪物、难度属性缩放、固定节拍复活与区域内 AI。
+--- 负责基于同步种子确定性生成怪物变体、固定节拍复活与区域内 AI。
 local jass = require "jass.common"
 local config = require "monster.config"
 local random = require "monster.random"
-local monster_stats = require "platform.monster_stats"
 local damage_numbers = require "combat.damage_numbers"
 local gold = require "gold.main"
 local experience = require "experience.main"
@@ -39,7 +38,6 @@ local INITIAL_SPAWN_INTERVAL_SECONDS = 0.04
 ---@field nextAbilityIndex integer 下一次尝试的主动技能下标
 ---@field nextCastAt table<string, number> 各技能下次可施放的秒数
 ---@field currentTarget unit|nil 最近攻击目标
----@field elitePoint EliteSpawnPoint|nil 精英点配置
 ---@field eliteAbilityRawcode string|nil 精英本次随机获得的技能，用于跨客户端校验
 ---@field bossAffix BossAffixConfig|nil Boss 自身携带的天灾词缀
 ---@field affixId string|nil 本次小怪继承的天灾词缀编号
@@ -53,6 +51,7 @@ local initial_spawn_timer = nil
 local death_trigger = nil
 local scheduler_tick = 0
 local difficulty = nil
+local current_army_tier = 1
 local hero_results = {}
 local session_seed_value = nil
 local active_player_ids = {}
@@ -152,18 +151,6 @@ local function create_unit(rawcode, x, y, facing)
     return jass.CreateUnit(jass.Player(NEUTRAL_HOSTILE_PLAYER_ID), unit_id, x, y, facing)
 end
 
-local function apply_difficulty(unit_handle, rawcode)
-    local base = config.get_unit_base_stats(rawcode)
-    if base == nil then
-        error("怪物单位缺少基础属性：" .. rawcode)
-    end
-    local scaled = monster_stats.calculate(base, difficulty)
-    local applied, message = monster_stats.apply(unit_handle, rawcode, difficulty, scaled)
-    if not applied then
-        error("怪物难度属性应用失败：" .. rawcode .. "，" .. tostring(message))
-    end
-end
-
 --- 将 Boss 当前视野共享给本局所有 PVE 玩家。
 --- 该原生接口在 Boss 出生、死亡时各调用一次，不需要位置轮询或迷雾刷新。
 ---@param boss_unit unit
@@ -201,7 +188,9 @@ end
 --- 向每个客户端的本地玩家显示 Boss 降临公告。
 --- 该函数只使用本地文字界面，不读取或写入任何同步游戏状态。
 ---@param rawcode string
-local function announce_boss_arrival(rawcode)
+---@param army_tier integer
+---@param tier_advanced boolean
+local function announce_boss_arrival(rawcode, army_tier, tier_advanced)
     if type(jass.DisplayTimedTextToPlayer) ~= "function" or type(jass.GetLocalPlayer) ~= "function" then
         if not boss_announcement_warning_printed then
             print("Boss 降临公告未启用：当前运行时缺少 DisplayTimedTextToPlayer 或 GetLocalPlayer 接口")
@@ -210,9 +199,24 @@ local function announce_boss_arrival(rawcode)
         return false
     end
     local boss_name = config.get_unit_name(rawcode) or rawcode
+    local tier_names = {"一", "二", "三", "四", "五", "六", "七", "八", "九"}
+    local tier_name = tier_names[army_tier] or tostring(army_tier)
+    local army_message
+    if tier_advanced then
+        army_message = string.format(
+            "天灾BOSS携带更强力的怪物军团降临大地！后续新生的普通怪与精英怪将提升至【%s阶】，请立即前往击杀！",
+            tier_name
+        )
+    else
+        army_message = string.format(
+            "天灾BOSS携带更强力的怪物军团降临大地！后续新生的普通怪与精英怪已达到最高【%s阶】，请立即前往击杀！",
+            tier_name
+        )
+    end
     local message = string.format(
-        "【%s】·天灾降临！后续产生的小怪将可能被天灾 Boss 强化，请立即前往击杀！",
-        boss_name
+        "【%s】·天灾降临！%s",
+        boss_name,
+        army_message
     )
     jass.DisplayTimedTextToPlayer(
         jass.GetLocalPlayer(),
@@ -337,7 +341,6 @@ local function apply_boss_affix(slot, unit_handle, rawcode)
 end
 
 local function register_unit(slot, unit_handle, rawcode, x, y, facing, active_abilities, elite_ability_rawcode)
-    apply_difficulty(unit_handle, rawcode)
     apply_boss_affix(slot, unit_handle, rawcode)
     slot.unit = unit_handle
     slot.rawcode = rawcode
@@ -362,31 +365,30 @@ local function register_unit(slot, unit_handle, rawcode, x, y, facing, active_ab
         max_life = math.max(1, math.floor(tonumber(jass.GetUnitState(unit_handle, jass.UNIT_STATE_MAX_LIFE)) or 1))
     end
     if slot.kind == "special_gold" then
-        gold.register_monster(unit_handle, "normal", slot.blockId, slot.generation, max_life)
+        gold.register_monster(unit_handle, "normal", rawcode, slot.generation, max_life)
     elseif slot.kind == "special_experience" then
-        local block = config.get_block(slot.blockId)
-        local normal_exp = block and config.get_unit_experience_reward(block.normalMeleeRawcode) or 0
-        if normal_exp <= 0 then error("特殊经验怪出生区域缺少普通怪经验：区域=" .. tostring(slot.blockId)) end
         experience.register_monster(
             unit_handle,
             "normal",
             rawcode,
             slot.generation,
-            max_life,
-            normal_exp * 2
+            max_life
         )
     else
-        gold.register_monster(unit_handle, slot.kind, slot.blockId, slot.generation, max_life)
+        gold.register_monster(unit_handle, slot.kind, rawcode, slot.generation, max_life)
         experience.register_monster(unit_handle, slot.kind, rawcode, slot.generation, max_life)
     end
 end
 
 local function spawn_normal(slot)
-    local block = config.get_block(slot.blockId)
-    local rawcode = block.normalRangedRawcode
+    local tier_units = config.get_tier_units(current_army_tier)
+    if tier_units == nil then error("普通怪阶位模板缺失：阶数=" .. tostring(current_army_tier)) end
+    local rawcode = tier_units.normalRangedRawcode
     if random.next_integer(slot.random, 1, 100) <= config.SETTINGS.normalMeleeChance then
-        rawcode = block.normalMeleeRawcode
+        rawcode = tier_units.normalMeleeRawcode
     end
+    rawcode = config.get_variant_rawcode(rawcode, difficulty)
+    if rawcode == nil then error("普通怪难度变体缺失：区域=" .. tostring(slot.blockId)) end
     local x, y = get_random_point(slot.region, slot.random)
     local facing = random.next_integer(slot.random, 0, 359)
     local unit_handle = create_unit(rawcode, x, y, facing)
@@ -397,13 +399,18 @@ local function spawn_normal(slot)
 end
 
 local function spawn_elite(slot)
+    local tier_units = config.get_tier_units(current_army_tier)
+    if tier_units == nil then error("精英怪阶位模板缺失：阶数=" .. tostring(current_army_tier)) end
     local x, y = get_random_point(slot.region, slot.random)
     local ability_index = random.next_integer(slot.random, 1, #config.ELITE_ABILITY_RAWCODES)
     local ability_rawcode = config.ELITE_ABILITY_RAWCODES[ability_index]
+    local base_rawcode = tier_units.eliteRawcode
+    local rawcode = config.get_variant_rawcode(base_rawcode, difficulty)
+    if rawcode == nil then error("精英怪难度变体缺失：" .. tostring(base_rawcode)) end
     local facing = random.next_integer(slot.random, 0, 359)
-    local unit_handle = create_unit(slot.elitePoint.eliteRawcode, x, y, facing)
+    local unit_handle = create_unit(rawcode, x, y, facing)
     if unit_handle == nil then
-        error("精英创建失败：" .. slot.elitePoint.eliteRawcode)
+        error("精英创建失败：" .. rawcode)
     end
 
     local ability_id = rawcode_to_unit_id(ability_rawcode)
@@ -420,7 +427,7 @@ local function spawn_elite(slot)
     register_unit(
         slot,
         unit_handle,
-        slot.elitePoint.eliteRawcode,
+        rawcode,
         x,
         y,
         facing,
@@ -432,24 +439,30 @@ end
 local function spawn_boss(slot)
     local x = (slot.region.minX + slot.region.maxX) * 0.5
     local y = (slot.region.minY + slot.region.maxY) * 0.5
-    local unit_handle = create_unit(slot.rawcode, x, y, 270.0)
+    local rawcode = config.get_variant_rawcode(slot.rawcode, difficulty)
+    if rawcode == nil then error("Boss 难度变体缺失：" .. tostring(slot.rawcode)) end
+    local unit_handle = create_unit(rawcode, x, y, 270.0)
     if unit_handle == nil then
-        error("Boss 创建失败：" .. slot.rawcode)
+        error("Boss 创建失败：" .. rawcode)
     end
     register_unit(
         slot,
         unit_handle,
-        slot.rawcode,
+        rawcode,
         x,
         y,
         270.0,
-        config.get_unit_active_abilities(slot.rawcode),
+        config.get_unit_active_abilities(rawcode),
         nil
     )
+    local previous_tier = current_army_tier
+    if current_army_tier < config.MAX_MONSTER_TIER then
+        current_army_tier = current_army_tier + 1
+    end
     set_boss_shared_vision(unit_handle, true)
     ping_boss_minimap(x, y)
     cataclysm_ui.show()
-    announce_boss_arrival(slot.rawcode)
+    announce_boss_arrival(rawcode, current_army_tier, current_army_tier > previous_tier)
 end
 
 local function special_slot_before(left, right)
@@ -492,7 +505,6 @@ local function new_special_slot(source_slot, special_kind, branch_order, child_i
         nextAbilityIndex = 1,
         nextCastAt = {},
         currentTarget = nil,
-        elitePoint = nil,
         eliteAbilityRawcode = nil,
         affixId = nil,
         affixAbilityRawcode = nil,
@@ -561,9 +573,11 @@ local function spawn_special_pack(source_slot, pack, killer_player_id, death_x, 
         local x, y = get_nearby_random_point(region, death_x, death_y, source_slot.specialRandom)
         local facing = random.next_integer(source_slot.specialRandom, 0, 359)
         local slot = new_special_slot(source_slot, unit_kind, branch_order, child_index, region)
-        local unit_handle = create_unit(rawcode, x, y, facing)
-        if unit_handle == nil then error("特殊怪创建失败：" .. rawcode) end
-        register_unit(slot, unit_handle, rawcode, x, y, facing, {}, nil)
+        local variant_rawcode = config.get_variant_rawcode(rawcode, difficulty)
+        if variant_rawcode == nil then error("特殊怪难度变体缺失：" .. rawcode) end
+        local unit_handle = create_unit(variant_rawcode, x, y, facing)
+        if unit_handle == nil then error("特殊怪创建失败：" .. variant_rawcode) end
+        register_unit(slot, unit_handle, variant_rawcode, x, y, facing, {}, nil)
         insert_special_slot(slot)
         special_count = special_count + 1
     end
@@ -638,7 +652,6 @@ local function new_slot(id, kind, block_id, region, session_seed)
         nextAbilityIndex = 1,
         nextCastAt = {},
         currentTarget = nil,
-        elitePoint = nil,
         eliteAbilityRawcode = nil,
         bossAffix = nil,
         affixId = nil,
@@ -663,7 +676,6 @@ local function create_slots(session_seed)
     for _, point in ipairs(config.ELITE_POINTS) do
         slot_id = slot_id + 1
         local slot = new_slot(slot_id, "elite", point.blockId, point.region, session_seed)
-        slot.elitePoint = point
         table.insert(slots, slot)
     end
     for _, point in ipairs(config.BOSS_POINTS) do
@@ -834,13 +846,9 @@ local function start_scheduler()
     scheduler_timer = jass.CreateTimer()
     jass.TimerStart(scheduler_timer, config.SETTINGS.schedulerIntervalSeconds, true, on_scheduler_tick)
     print(string.format(
-        "PVE 刷怪系统已启动：属性后端=%s，难度=%d，模式=%d，生命倍率=%d/10，攻击倍率=%d/10，护甲+%d，普通怪=%d，精英=%d",
-        monster_stats.get_backend_name(),
+        "PVE 刷怪系统已启动：单位属性来自 unit.xlsx 最终变体，难度=%d，模式=%d，普通怪=%d，精英=%d",
         difficulty.level,
         difficulty.modeId,
-        difficulty.healthMultiplier,
-        difficulty.attackMultiplier,
-        difficulty.armorBonus,
         NORMAL_SLOT_COUNT,
         ELITE_SLOT_COUNT
     ))
@@ -988,9 +996,10 @@ function module.get_state_summary()
         hash = hash_text(record, hash)
     end
     return string.format(
-        "seed=%d,tick=%d,alive=%d/%d/%d,special=%d/%d,slots=%d+%d,hash=%d",
+        "seed=%d,tick=%d,tier=%d,alive=%d/%d/%d,special=%d/%d,slots=%d+%d,hash=%d",
         session_seed_value or 0,
         scheduler_tick,
+        current_army_tier,
         normal_alive,
         elite_alive,
         boss_alive,
@@ -1009,14 +1018,6 @@ end
 ---@return boolean started 是否成功首次启动
 function module.start(selection, selections, session_seed)
     if running then
-        return false
-    end
-    if not monster_stats.is_available() then
-        print(
-            "PVE 刷怪系统启动失败：当前运行时缺少 Warcraft 1.27 单位技能接口（"
-                .. table.concat(monster_stats.get_missing_interfaces(), ", ")
-                .. "）"
-        )
         return false
     end
     local created_difficulty, message = config.create_difficulty(selection)
@@ -1047,6 +1048,7 @@ function module.start(selection, selections, session_seed)
     end)
 
     scheduler_tick = 0
+    current_army_tier = 1
     if not special_spawn.start(hero_results) then
         print("PVE 刷怪系统启动失败：特殊怪生成概率接口未能启动")
         return false

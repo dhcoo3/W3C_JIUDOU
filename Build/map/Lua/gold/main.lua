@@ -2,6 +2,7 @@
 --- 金币账户使用 Warcraft III 原生 PLAYER_STATE_RESOURCE_GOLD；Lua 只保存击杀结算状态。
 local jass = require "jass.common"
 local config = require "config.gold"
+local units = require "config.units"
 local monster_config = require "monster.config"
 local formula = require "gold.formula"
 local sync = require "gold.sync"
@@ -17,7 +18,8 @@ local GOLD_STATE = jass.PLAYER_STATE_RESOURCE_GOLD
 
 local started = false
 local sync_available = false
-local difficulty_multiplier_percent = 100
+local difficulty_mode_id = 1
+local difficulty_level = 1
 local death_trigger = nil
 local next_event_id = 0
 local last_applied_event_id = 0
@@ -181,12 +183,7 @@ end
 
 local function settle_monster(info, dying_unit)
     if not sync.is_host() then return end
-    local pool = formula.calculate_pool(
-        config,
-        info.kind,
-        info.level,
-        difficulty_multiplier_percent
-    )
+    local pool = formula.base_reward(units, info.rawcode)
     if pool <= 0 then return end
 
     local x = type(jass.GetUnitX) == "function" and jass.GetUnitX(dying_unit) or nil
@@ -219,17 +216,17 @@ local function on_unit_death()
     settle_monster(info, dying_unit)
 end
 
---- 注册新生成的怪物；由 monster.main 在应用难度属性后调用。
+--- 注册新生成的怪物；奖励直接读取该单位难度变体的 goldRep。
 ---@param unit_handle unit 怪物句柄
 ---@param kind string normal、elite 或 boss
----@param level integer 怪物等级
+---@param rawcode string 最终难度变体 Rawcode
 ---@param generation integer 当前槽位生成代
----@param max_life integer 难度缩放后的最大生命
-function module.register_monster(unit_handle, kind, level, generation, max_life)
-    if not started or unit_handle == nil then return false end
+---@param max_life integer 当前 unit.xlsx 变体物编的最大生命
+function module.register_monster(unit_handle, kind, rawcode, generation, max_life)
+    if not started or unit_handle == nil or type(rawcode) ~= "string" then return false end
     local info = {
         kind = kind,
-        level = math.max(1, math.min(9, math.floor(tonumber(level) or 1))),
+        rawcode = rawcode,
         generation = math.max(1, math.floor(tonumber(generation) or 1)),
         maxLife = math.max(1, math.floor(tonumber(max_life) or 1)),
         recordedDamage = 0,
@@ -327,7 +324,8 @@ function module.start(selection, hero_results)
         return false
     end
 
-    difficulty_multiplier_percent = math.max(0, math.floor(tonumber(difficulty.goldMultiplierPercent) or 100))
+    difficulty_mode_id = difficulty.modeId
+    difficulty_level = difficulty.level
     for player_id in pairs(active_players) do
         set_native_gold(player_id, config.settings.initialGold)
         gold_bonus_by_player[player_id] = 0
@@ -351,7 +349,7 @@ function module.start(selection, hero_results)
     jass.TriggerAddAction(death_trigger, on_unit_death)
     damage_service.subscribe(on_damage_report)
     started = true
-    print(string.format("金币系统已启动：难度金币倍率=%d%%，玩家=%d", difficulty_multiplier_percent, active_count))
+    print(string.format("金币系统已启动：奖励读取 unit.xlsx 最终变体，模式=%d，难度=%d，玩家=%d", difficulty_mode_id, difficulty_level, active_count))
     return true
 end
 

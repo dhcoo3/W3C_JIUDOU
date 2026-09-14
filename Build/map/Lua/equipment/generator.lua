@@ -163,7 +163,7 @@ function module.create_instance(level, template_id, pool_id, uid, serial)
 end
 
 --- 根据怪物掉落规则生成装备。
----@param drop_rule EquipmentDropConfig 掉落规则
+---@param drop_rule table 掉落参数，由 unit.xlsx 当前变体行构造
 ---@param uid integer 装备唯一 ID
 ---@param serial integer 随机序号
 ---@return EquipmentInstance|nil result 装备结果

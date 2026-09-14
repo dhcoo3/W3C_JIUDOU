@@ -1,5 +1,11 @@
 Set-StrictMode -Version Latest
 
+# Workbook metadata is reused because several configurations read multiple sheets
+# from the same xlsx file during a single generator run.
+$script:XlsxWorkbookMetadataCache = @{}
+$script:XlsxColumnIndexCache = @{}
+$script:ExcelTypeDescriptorCache = @{}
+
 function Get-XlsxZipEntryText {
     param(
         [Parameter(Mandatory = $true)][System.IO.Compression.ZipArchive]$Archive,
@@ -44,15 +50,28 @@ function Get-XlsxTextContent {
 function Convert-XlsxColumnReferenceToIndex {
     param([Parameter(Mandatory = $true)][string]$CellReference)
 
-    if ($CellReference -notmatch '^([A-Z]+)[0-9]+$') {
+    $columnLength = 0
+    while ($columnLength -lt $CellReference.Length) {
+        $characterCode = [int][char]$CellReference[$columnLength]
+        if ($characterCode -lt 65 -or $characterCode -gt 90) { break }
+        $columnLength++
+    }
+    if ($columnLength -eq 0 -or $CellReference.Substring($columnLength) -notmatch '^[1-9][0-9]*$') {
         throw "Excel 单元格引用无效：$CellReference"
     }
 
+    $columnName = $CellReference.Substring(0, $columnLength)
+    if ($script:XlsxColumnIndexCache.ContainsKey($columnName)) {
+        return $script:XlsxColumnIndexCache[$columnName]
+    }
+
     $index = 0
-    foreach ($character in $Matches[1].ToCharArray()) {
+    foreach ($character in $columnName.ToCharArray()) {
         $index = ($index * 26) + (([int][char]$character) - ([int][char]'A') + 1)
     }
-    return $index - 1
+    $index--
+    $script:XlsxColumnIndexCache[$columnName] = $index
+    return $index
 }
 
 function Convert-XlsxColumnIndexToName {
@@ -71,38 +90,15 @@ function Convert-XlsxColumnIndexToName {
 function Get-XlsxWorksheetEntryPath {
     param(
         [Parameter(Mandatory = $true)][System.IO.Compression.ZipArchive]$Archive,
+        [Parameter(Mandatory = $true)][string]$WorkbookPath,
         [Parameter(Mandatory = $true)][string]$SheetName
     )
 
-    [xml]$workbook = Get-XlsxZipEntryText $Archive 'xl/workbook.xml'
-    [xml]$relationships = Get-XlsxZipEntryText $Archive 'xl/_rels/workbook.xml.rels'
-    $namespaceManager = [System.Xml.XmlNamespaceManager]::new($workbook.NameTable)
-    $namespaceManager.AddNamespace('main', 'http://schemas.openxmlformats.org/spreadsheetml/2006/main')
-    $namespaceManager.AddNamespace('rel', 'http://schemas.openxmlformats.org/officeDocument/2006/relationships')
-    $namespaceManager.AddNamespace('package', 'http://schemas.openxmlformats.org/package/2006/relationships')
-
-    $sheet = $workbook.SelectSingleNode("/main:workbook/main:sheets/main:sheet[@name='$SheetName']", $namespaceManager)
-    if ($null -eq $sheet) {
+    $metadata = Get-XlsxWorkbookMetadata $Archive $WorkbookPath
+    if (-not $metadata.SheetPaths.ContainsKey($SheetName)) {
         throw "Excel 工作表不存在：$SheetName"
     }
-    $relationshipId = $sheet.GetAttribute('id', 'http://schemas.openxmlformats.org/officeDocument/2006/relationships')
-    if ([string]::IsNullOrWhiteSpace($relationshipId)) {
-        throw "Excel 工作表关系缺失：$SheetName"
-    }
-
-    $relationship = $relationships.SelectSingleNode("/package:Relationships/package:Relationship[@Id='$relationshipId']", $namespaceManager)
-    if ($null -eq $relationship) {
-        throw "Excel 工作表关系无效：$SheetName"
-    }
-    $target = $relationship.GetAttribute('Target')
-    if ([string]::IsNullOrWhiteSpace($target)) {
-        throw "Excel 工作表目标无效：$SheetName"
-    }
-    $normalizedTarget = $target.Replace('\', '/').TrimStart('/')
-    if ($normalizedTarget.StartsWith('xl/')) {
-        return $normalizedTarget
-    }
-    return 'xl/' + $normalizedTarget
+    return $metadata.SheetPaths[$SheetName]
 }
 
 function Read-XlsxSharedStrings {
@@ -122,47 +118,65 @@ function Read-XlsxSharedStrings {
     return ,([string[]]$result.ToArray())
 }
 
-function Get-XlsxCellValue {
+function Get-XlsxWorkbookMetadata {
     param(
-        [Parameter(Mandatory = $true)][System.Xml.XmlNode]$Cell,
-        [Parameter(Mandatory = $true)][AllowEmptyCollection()][AllowEmptyString()][string[]]$SharedStrings,
-        [Parameter(Mandatory = $true)][System.Xml.XmlNamespaceManager]$NamespaceManager
+        [Parameter(Mandatory = $true)][System.IO.Compression.ZipArchive]$Archive,
+        [Parameter(Mandatory = $true)][string]$WorkbookPath
     )
 
-    $cellType = $Cell.GetAttribute('t')
-    if ($cellType -eq 'inlineStr') {
-        return Get-XlsxTextContent $Cell $NamespaceManager
+    $archivePath = [System.IO.Path]::GetFullPath($WorkbookPath)
+    if ($script:XlsxWorkbookMetadataCache.ContainsKey($archivePath)) {
+        return $script:XlsxWorkbookMetadataCache[$archivePath]
     }
 
-    $valueNode = $Cell.SelectSingleNode('main:v', $NamespaceManager)
-    if ($null -eq $valueNode) {
-        return $null
-    }
-    $value = $valueNode.InnerText
-    if ($cellType -eq 's') {
-        $index = 0
-        if (-not [int]::TryParse($value, [ref]$index) -or $index -lt 0 -or $index -ge $SharedStrings.Count) {
-            throw "Excel 共享字符串索引无效：$value"
+    [xml]$workbook = Get-XlsxZipEntryText $Archive 'xl/workbook.xml'
+    [xml]$relationships = Get-XlsxZipEntryText $Archive 'xl/_rels/workbook.xml.rels'
+    $namespaceManager = [System.Xml.XmlNamespaceManager]::new($workbook.NameTable)
+    $namespaceManager.AddNamespace('main', 'http://schemas.openxmlformats.org/spreadsheetml/2006/main')
+    $namespaceManager.AddNamespace('package', 'http://schemas.openxmlformats.org/package/2006/relationships')
+
+    $sheetPaths = @{}
+    foreach ($sheet in $workbook.SelectNodes('/main:workbook/main:sheets/main:sheet', $namespaceManager)) {
+        $sheetName = $sheet.GetAttribute('name')
+        $relationshipId = $sheet.GetAttribute('id', 'http://schemas.openxmlformats.org/officeDocument/2006/relationships')
+        if ([string]::IsNullOrWhiteSpace($relationshipId)) {
+            throw "Excel 工作表关系缺失：$archivePath / $sheetName"
         }
-        return $SharedStrings[$index]
+        $relationship = $relationships.SelectSingleNode("/package:Relationships/package:Relationship[@Id='$relationshipId']", $namespaceManager)
+        if ($null -eq $relationship) {
+            throw "Excel 工作表关系无效：$archivePath / $sheetName"
+        }
+        $target = $relationship.GetAttribute('Target')
+        if ([string]::IsNullOrWhiteSpace($target)) {
+            throw "Excel 工作表目标无效：$archivePath / $sheetName"
+        }
+        $normalizedTarget = $target.Replace('\', '/').TrimStart('/')
+        if (-not $normalizedTarget.StartsWith('xl/')) {
+            $normalizedTarget = 'xl/' + $normalizedTarget
+        }
+        $sheetPaths[$sheetName] = $normalizedTarget
     }
-    if ($cellType -eq 'b') {
-        return if ($value -eq '1') { 'true' } else { 'false' }
+
+    $metadata = [pscustomobject]@{
+        SheetPaths = $sheetPaths
+        SharedStrings = Read-XlsxSharedStrings $Archive
     }
-    return $value
+    $script:XlsxWorkbookMetadataCache[$archivePath] = $metadata
+    return $metadata
 }
 
 function Read-XlsxCellRows {
     param(
         [Parameter(Mandatory = $true)][System.IO.Compression.ZipArchive]$Archive,
+        [Parameter(Mandatory = $true)][string]$WorkbookPath,
         [Parameter(Mandatory = $true)][string]$SheetName
     )
 
-    $worksheetPath = Get-XlsxWorksheetEntryPath $Archive $SheetName
+    $worksheetPath = Get-XlsxWorksheetEntryPath $Archive $WorkbookPath $SheetName
     [xml]$worksheet = Get-XlsxZipEntryText $Archive $worksheetPath
     $namespaceManager = [System.Xml.XmlNamespaceManager]::new($worksheet.NameTable)
     $namespaceManager.AddNamespace('main', 'http://schemas.openxmlformats.org/spreadsheetml/2006/main')
-    $sharedStrings = Read-XlsxSharedStrings $Archive
+    $sharedStrings = (Get-XlsxWorkbookMetadata $Archive $WorkbookPath).SharedStrings
     $rows = @{}
     foreach ($row in $worksheet.SelectNodes('/main:worksheet/main:sheetData/main:row', $namespaceManager)) {
         $rowIndex = 0
@@ -173,7 +187,27 @@ function Read-XlsxCellRows {
         foreach ($cell in $row.SelectNodes('main:c', $namespaceManager)) {
             $cellReference = $cell.GetAttribute('r')
             $columnIndex = Convert-XlsxColumnReferenceToIndex $cellReference
-            $cells[$columnIndex] = Get-XlsxCellValue $cell $sharedStrings $namespaceManager
+            $cellType = $cell.GetAttribute('t')
+            if ($cellType -eq 'inlineStr') {
+                $cellValue = Get-XlsxTextContent $cell $namespaceManager
+            } else {
+                $valueNode = $cell.SelectSingleNode('main:v', $namespaceManager)
+                if ($null -eq $valueNode) {
+                    $cellValue = $null
+                } else {
+                    $cellValue = $valueNode.InnerText
+                    if ($cellType -eq 's') {
+                        $sharedStringIndex = 0
+                        if (-not [int]::TryParse($cellValue, [ref]$sharedStringIndex) -or $sharedStringIndex -lt 0 -or $sharedStringIndex -ge $sharedStrings.Count) {
+                            throw "Excel 共享字符串索引无效：$cellValue"
+                        }
+                        $cellValue = $sharedStrings[$sharedStringIndex]
+                    } elseif ($cellType -eq 'b') {
+                        $cellValue = if ($cellValue -eq '1') { 'true' } else { 'false' }
+                    }
+                }
+            }
+            $cells[$columnIndex] = $cellValue
         }
         $rows[$rowIndex] = $cells
     }
@@ -243,9 +277,27 @@ function ConvertFrom-ExcelTypedValue {
         [Parameter(Mandatory = $true)][string]$Context
     )
 
-    $alternatives = @($Type.Split('|') | ForEach-Object { $_.Trim() } | Where-Object { $_.Length -gt 0 })
-    if ($alternatives.Count -eq 0) {
-        throw "$Context 缺少字段类型"
+    $descriptor = $script:ExcelTypeDescriptorCache[$Type]
+    if ($null -eq $descriptor) {
+        $arrayType = $null
+        $scalarType = $null
+        foreach ($alternative in $Type.Split('|')) {
+            $candidate = $alternative.Trim()
+            if ($candidate.Length -eq 0) { continue }
+            if ($candidate.EndsWith('[]')) {
+                if ($null -eq $arrayType) { $arrayType = $candidate }
+            } elseif ($null -eq $scalarType) {
+                $scalarType = $candidate
+            }
+        }
+        if ($null -eq $arrayType -and $null -eq $scalarType) {
+            throw "$Context 缺少字段类型"
+        }
+        $descriptor = [pscustomobject]@{
+            ArrayType = $arrayType
+            ScalarType = $scalarType
+        }
+        $script:ExcelTypeDescriptorCache[$Type] = $descriptor
     }
 
     $trimmed = $Text.Trim()
@@ -253,11 +305,10 @@ function ConvertFrom-ExcelTypedValue {
         if (-not ($trimmed.StartsWith('{') -and $trimmed.EndsWith('}'))) {
             throw "$Context 数组格式不完整：$Text"
         }
-        $arrayType = @($alternatives | Where-Object { $_.EndsWith('[]') }) | Select-Object -First 1
-        if ($null -eq $arrayType) {
+        if ($null -eq $descriptor.ArrayType) {
             throw "$Context 不接受数组值：$Text"
         }
-        $elementType = $arrayType.Substring(0, $arrayType.Length - 2)
+        $elementType = $descriptor.ArrayType.Substring(0, $descriptor.ArrayType.Length - 2)
         $inner = $trimmed.Substring(1, $trimmed.Length - 2).Trim()
         if ($inner.Length -eq 0) {
             return ,([object[]]@())
@@ -269,11 +320,10 @@ function ConvertFrom-ExcelTypedValue {
         return ,($values.ToArray())
     }
 
-    $scalarType = @($alternatives | Where-Object { -not $_.EndsWith('[]') }) | Select-Object -First 1
-    if ($null -eq $scalarType) {
+    if ($null -eq $descriptor.ScalarType) {
         throw "$Context 需要数组值：$Text"
     }
-    return ConvertFrom-ExcelScalar $Text $scalarType $Context
+    return ConvertFrom-ExcelScalar $Text $descriptor.ScalarType $Context
 }
 
 function Read-ExcelObjectTable {
@@ -290,7 +340,7 @@ function Read-ExcelObjectTable {
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $archive = [System.IO.Compression.ZipFile]::OpenRead($Path)
     try {
-        $rows = Read-XlsxCellRows $archive $SheetName
+        $rows = Read-XlsxCellRows $archive $Path $SheetName
         if (-not $rows.ContainsKey(3)) {
             throw "Excel 缺少第 3 行字段属性：$Path / $SheetName"
         }
@@ -313,6 +363,7 @@ function Read-ExcelObjectTable {
             }
             $fields.Add([pscustomobject]@{
                 Column = $column
+                ColumnName = Convert-XlsxColumnIndexToName $column
                 Name = $fieldName
                 Type = [string]$fieldType
             })
@@ -326,20 +377,28 @@ function Read-ExcelObjectTable {
             throw "Excel ID 字段类型必须为 string：$Path / $SheetName / $IdField"
         }
 
+        $dataFields = @($fields.ToArray() | Select-Object -Skip 1)
+        $idColumn = $fields[0].Column
         $sections = [ordered]@{}
         $maxRow = @($rows.Keys | Measure-Object -Maximum).Maximum
         for ($row = 4; $row -le $maxRow; $row = $row + 1) {
-            $idCell = Get-XlsxMappedCellValue $rows $row $fields[0].Column
-            $idText = if ($null -eq $idCell) { '' } else { [string]$idCell }
-            $hasOtherValues = $false
-            foreach ($field in $fields | Select-Object -Skip 1) {
-                $cell = Get-XlsxMappedCellValue $rows $row $field.Column
-                if ($null -ne $cell -and ([string]$cell).Length -gt 0) {
-                    $hasOtherValues = $true
-                    break
-                }
+            $rowCells = $rows[$row]
+            $idCell = $null
+            if ($null -ne $rowCells -and $rowCells.ContainsKey($idColumn)) {
+                $idCell = $rowCells[$idColumn]
             }
+            $idText = if ($null -eq $idCell) { '' } else { [string]$idCell }
             if ($idText.Length -eq 0) {
+                $hasOtherValues = $false
+                foreach ($field in $dataFields) {
+                    if ($null -ne $rowCells -and $rowCells.ContainsKey($field.Column)) {
+                        $cell = $rowCells[$field.Column]
+                        if ($null -ne $cell -and ([string]$cell).Length -gt 0) {
+                            $hasOtherValues = $true
+                            break
+                        }
+                    }
+                }
                 if ($hasOtherValues) {
                     throw "Excel 数据行缺少 ID：$Path / $SheetName / A$row"
                 }
@@ -353,12 +412,13 @@ function Read-ExcelObjectTable {
             }
 
             $entry = [ordered]@{}
-            foreach ($field in $fields | Select-Object -Skip 1) {
-                $cell = Get-XlsxMappedCellValue $rows $row $field.Column
+            foreach ($field in $dataFields) {
+                if ($null -eq $rowCells -or -not $rowCells.ContainsKey($field.Column)) { continue }
+                $cell = $rowCells[$field.Column]
                 if ($null -eq $cell -or ([string]$cell).Length -eq 0) {
                     continue
                 }
-                $cellName = (Convert-XlsxColumnIndexToName $field.Column) + $row
+                $cellName = $field.ColumnName + $row
                 $entry[$field.Name] = ConvertFrom-ExcelTypedValue ([string]$cell) $field.Type "$Path / $SheetName / $cellName"
             }
             $sections[$idText] = $entry
@@ -389,7 +449,7 @@ function Read-ExcelTypedRows {
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $archive = [System.IO.Compression.ZipFile]::OpenRead($Path)
     try {
-        $rows = Read-XlsxCellRows $archive $SheetName
+        $rows = Read-XlsxCellRows $archive $Path $SheetName
         if (-not $rows.ContainsKey(3)) {
             throw "Excel 缺少第 3 行字段属性：$Path / $SheetName"
         }
@@ -412,6 +472,7 @@ function Read-ExcelTypedRows {
             }
             $fields.Add([pscustomobject]@{
                 Column = $column
+                ColumnName = Convert-XlsxColumnIndexToName $column
                 Name = $fieldName
                 Type = [string]$fieldType
             })
@@ -424,13 +485,15 @@ function Read-ExcelTypedRows {
         $typedRows = New-Object System.Collections.Generic.List[object]
         $maxRow = @($rows.Keys | Measure-Object -Maximum).Maximum
         for ($row = 4; $row -le $maxRow; $row = $row + 1) {
+            $rowCells = $rows[$row]
             $entry = [ordered]@{}
             foreach ($field in $fields) {
-                $cell = Get-XlsxMappedCellValue $rows $row $field.Column
+                if ($null -eq $rowCells -or -not $rowCells.ContainsKey($field.Column)) { continue }
+                $cell = $rowCells[$field.Column]
                 if ($null -eq $cell -or ([string]$cell).Length -eq 0) {
                     continue
                 }
-                $cellName = (Convert-XlsxColumnIndexToName $field.Column) + $row
+                $cellName = $field.ColumnName + $row
                 $entry[$field.Name] = ConvertFrom-ExcelTypedValue ([string]$cell) $field.Type "$Path / $SheetName / $cellName"
             }
             if ($entry.Count -gt 0) {

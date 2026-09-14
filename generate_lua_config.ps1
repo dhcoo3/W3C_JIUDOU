@@ -283,109 +283,87 @@ function Get-RequiredUnitInteger {
 function Validate-MonsterExperience {
     param([Parameter(Mandatory = $true)][System.Collections.IDictionary]$Units)
 
-    foreach ($rawcode in Get-MonsterUnitRawcodes $Units) {
-        $experience = Get-RequiredUnitInteger $Units[$rawcode] $rawcode 'expReward'
-        if ($rawcode -eq 'G0M1') {
-            if ($experience -ne 0) {
-                throw "金币怪不得配置经验奖励：$rawcode.expReward"
-            }
-            continue
-        }
-        if ($experience -le 0) {
-            throw "刷怪单位经验必须为正整数：$rawcode.expReward"
-        }
+    $baseRawcodes = @(Get-MonsterUnitRawcodes $Units)
+    if ($baseRawcodes.Count -ne 38) { throw "PVE 基础怪物必须恰有 38 种，实际=$($baseRawcodes.Count)" }
+    $tierNames = @{
+        '一' = 1; '二' = 2; '三' = 3; '四' = 4; '五' = 5
+        '六' = 6; '七' = 7; '八' = 8; '九' = 9
     }
-}
-
-function New-MonsterDifficultyProfiles {
-    param([Parameter(Mandatory = $true)][object[]]$Rows)
-
-    $requiredFields = @('modeId', 'level', 'healthMultiplier', 'attackMultiplier', 'armorBonus', 'goldMultiplierPercent', 'experienceMultiplierPercent')
-    $sourceProfiles = @{}
-    foreach ($sourceRow in $Rows) {
-        $data = $sourceRow.Data
-        foreach ($field in $requiredFields) {
-            if (-not $data.Contains($field)) {
-                throw "怪物难度配置缺少字段：monster_scaling.xlsx 第 $($sourceRow.Row) 行 / $field"
+    $tierVariantCounts = @{}
+    $seen = @{}
+    $variantCount = 0
+    foreach ($rawcode in $Units.Keys) {
+        $unit = $Units[$rawcode]
+        if (-not $unit.Contains('baseUnitId')) { continue }
+        $base = [string]$unit.baseUnitId
+        $mode = Get-RequiredUnitInteger $unit $rawcode 'modeId'
+        $level = Get-RequiredUnitInteger $unit $rawcode 'difficultyLevel'
+        if ($baseRawcodes -notcontains $base -or $mode -notin @(1, 2) -or $level -lt 1 -or $level -gt 10) {
+            throw "怪物变体元数据无效：$rawcode / base=$base / mode=$mode / level=$level"
+        }
+        if ($base -match '^[NE]') {
+            $tier = Get-RequiredUnitInteger $unit $rawcode 'tier'
+            $nameMatch = [regex]::Match([string]$unit.Name, '·(?<tier>[一二三四五六七八九])阶$')
+            if ($tier -lt 1 -or $tier -gt 9 -or -not $nameMatch.Success -or $tierNames[$nameMatch.Groups['tier'].Value] -ne $tier) {
+                throw "怪物阶数必须与名称后缀一致（一阶至九阶）：$rawcode / Name=$($unit.Name) / tier=$tier"
             }
+            $tierKey = [string]$tier
+            if (-not $tierVariantCounts.ContainsKey($tierKey)) { $tierVariantCounts[$tierKey] = 0 }
+            $tierVariantCounts[$tierKey]++
+        } elseif ($unit.Contains('tier')) {
+            throw "Boss、金币怪和经验怪不应设置军团阶数：$rawcode"
+        }
+        $key = "$base`:$mode`:$level"
+        if ($seen.ContainsKey($key)) { throw "怪物难度组合重复：$key" }
+        $seen[$key] = $true
+        $variantCount++
+
+        $experience = Get-RequiredUnitInteger $unit $rawcode 'expReward'
+        $gold = Get-RequiredUnitInteger $unit $rawcode 'goldRep'
+        if ($base -eq 'G0M1') {
+            if ($experience -ne 0 -or $gold -le 0) { throw "金币怪经验/金币奖励无效：$rawcode" }
+        } elseif ($base -eq 'X0M1') {
+            if ($experience -le 0 -or $gold -ne 0) { throw "经验怪经验/金币奖励无效：$rawcode" }
+        } elseif ($experience -le 0 -or $gold -le 0) {
+            throw "普通、精英和 Boss 变体的经验与金币奖励必须为正整数：$rawcode"
         }
 
-        $modeId = [int]$data.modeId
-        $level = [int]$data.level
-        $healthMultiplier = [int]$data.healthMultiplier
-        $attackMultiplier = [int]$data.attackMultiplier
-        $armorBonus = [int]$data.armorBonus
-        $goldMultiplierPercent = [int]$data.goldMultiplierPercent
-        $experienceMultiplierPercent = [int]$data.experienceMultiplierPercent
-        if (($modeId -ne 1 -and $modeId -ne 2) -or $level -lt 1 -or $level -gt 10) {
-            throw "怪物难度配置模式或等级无效：monster_scaling.xlsx 第 $($sourceRow.Row) 行"
-        }
-        if ($healthMultiplier -lt 10) {
-            throw "怪物生命倍率必须不低于 10（代表 1 倍）：monster_scaling.xlsx 第 $($sourceRow.Row) 行"
-        }
-        if ($attackMultiplier -lt 10) {
-            throw "怪物攻击倍率必须不低于 10（代表 1 倍）：monster_scaling.xlsx 第 $($sourceRow.Row) 行"
-        }
-        if ($armorBonus -lt 0) {
-            throw "怪物护甲加成必须为非负整数：monster_scaling.xlsx 第 $($sourceRow.Row) 行"
-        }
-        if ($goldMultiplierPercent -lt 0) {
-            throw "金币倍率必须为非负整数：monster_scaling.xlsx 第 $($sourceRow.Row) 行"
-        }
-        if ($experienceMultiplierPercent -lt 0) {
-            throw "经验倍率必须为非负整数：monster_scaling.xlsx 第 $($sourceRow.Row) 行"
-        }
-
-        $key = "$modeId`:$level"
-        if ($sourceProfiles.ContainsKey($key)) {
-            throw "怪物难度配置重复：monster_scaling.xlsx / $key"
-        }
-        $sourceProfiles[$key] = [ordered]@{
-            modeId = $modeId
-            level = $level
-            healthMultiplier = $healthMultiplier
-            attackMultiplier = $attackMultiplier
-            armorBonus = $armorBonus
-            goldMultiplierPercent = $goldMultiplierPercent
-            experienceMultiplierPercent = $experienceMultiplierPercent
-        }
-    }
-
-    $profiles = [ordered]@{}
-    $index = 0
-    foreach ($modeId in @(1, 2)) {
-        for ($level = 1; $level -le 10; $level = $level + 1) {
-            $key = "$modeId`:$level"
-            if (-not $sourceProfiles.ContainsKey($key)) {
-                throw "怪物难度配置缺失：monster_scaling.xlsx / $key"
-            }
-            $index = $index + 1
-            $source = $sourceProfiles[$key]
-            $profiles[$key] = [ordered]@{
-                modeId = $modeId
-                level = $level
-                multiplier = $source.healthMultiplier
-                healthMultiplier = $source.healthMultiplier
-                attackMultiplier = $source.attackMultiplier
-                armorBonus = $source.armorBonus
-                goldMultiplierPercent = $source.goldMultiplierPercent
-                experienceMultiplierPercent = $source.experienceMultiplierPercent
-                groupIndex = [math]::Floor(($index - 1) / 4) + 1
-                abilityLevel = (($index - 1) % 4) + 1
+        $chance = Get-RequiredUnitInteger $unit $rawcode 'dropChancePercent'
+        if ($chance -lt 0 -or $chance -gt 100) { throw "装备掉落概率必须在 0~100：$rawcode" }
+        if ($chance -gt 0) {
+            $dropMin = Get-RequiredUnitInteger $unit $rawcode 'dropLevelMin'
+            $dropMax = Get-RequiredUnitInteger $unit $rawcode 'dropLevelMax'
+            $maxDrops = Get-RequiredUnitInteger $unit $rawcode 'maxDrops'
+            $pool = [string]$unit.poolId
+            if ([string]::IsNullOrWhiteSpace($pool) -or $dropMin -lt 1 -or $dropMax -lt $dropMin -or $dropMax -gt 5 -or $maxDrops -lt 1) {
+                throw "怪物装备掉落配置无效：$rawcode"
             }
         }
     }
-    if ($sourceProfiles.Count -ne 20) {
-        throw "怪物难度配置必须恰有 20 行，实际为：$($sourceProfiles.Count)"
+    if ($variantCount -ne 760 -or $seen.Count -ne 760) {
+        throw "怪物变体必须恰有 38×2×10=760 行，实际=$variantCount"
     }
-    return $profiles
+    for ($tier = 1; $tier -le 9; $tier = $tier + 1) {
+        if ($tierVariantCounts[[string]$tier] -ne 60) {
+            throw "每阶必须恰有 60 个普通怪/精英难度变体：阶数=$tier / 实际=$($tierVariantCounts[[string]$tier])"
+        }
+    }
+    # The generated summon is injected by Apply-RoguelikeObjectOverrides after
+    # reading the six non-PVE rows from unit.xlsx.
+    if ($Units.Count -ne 767 -or ($Units.Count - $variantCount) -ne 7 -or -not $Units.Contains('u0W1')) {
+        throw "单位表应包含 760 个 PVE 变体、6 个未扩展表格单位与生成召唤物 u0W1，实际单位数=$($Units.Count)"
+    }
+    foreach ($base in $baseRawcodes) {
+        for ($mode = 1; $mode -le 2; $mode++) {
+            for ($level = 1; $level -le 10; $level++) {
+                if (-not $seen.ContainsKey("$base`:$mode`:$level")) { throw "怪物变体缺失：$base / mode=$mode / level=$level" }
+            }
+        }
+    }
 }
 
 function New-GoldConfig {
-    param(
-        [Parameter(Mandatory = $true)][object]$RewardTable,
-        [Parameter(Mandatory = $true)][object]$SettingsTable
-    )
+    param([Parameter(Mandatory = $true)][object]$SettingsTable)
 
     $settings = [ordered]@{}
     foreach ($settingId in @('initialGold', 'maxGoldDropBonusPercent', 'maxGold')) {
@@ -406,45 +384,7 @@ function New-GoldConfig {
         throw "金币上限不能低于初始金币：gold.xlsx/settings"
     }
 
-    $rewards = [ordered]@{
-        normal = [ordered]@{}
-        elite = [ordered]@{}
-        boss = [ordered]@{}
-    }
-    foreach ($rewardId in $RewardTable.Sections.Keys) {
-        $row = $RewardTable.Sections[$rewardId]
-        foreach ($field in @('kind', 'level', 'baseGold')) {
-            if (-not $row.Contains($field)) {
-                throw "金币奖励缺少字段：gold.xlsx/rewards/$rewardId/$field"
-            }
-        }
-        $kind = [string]$row.kind
-        $level = [int]$row.level
-        $baseGold = [int]$row.baseGold
-        if (-not $rewards.Contains($kind) -or $level -lt 1 -or $level -gt 9 -or $baseGold -le 0) {
-            throw "金币奖励类型、等级或数值无效：gold.xlsx/rewards/$rewardId"
-        }
-        $levelKey = [string]$level
-        if ($rewards[$kind].Contains($levelKey)) {
-            throw "金币奖励重复：gold.xlsx/rewards/$kind/$level"
-        }
-        $rewards[$kind][$levelKey] = $baseGold
-    }
-    foreach ($kind in @('normal', 'elite', 'boss')) {
-        for ($level = 1; $level -le 9; $level = $level + 1) {
-            if (-not $rewards[$kind].Contains([string]$level)) {
-                throw "金币奖励缺失：gold.xlsx/rewards/$kind/$level"
-            }
-        }
-    }
-    if ($RewardTable.Sections.Count -ne 27) {
-        throw "金币奖励必须恰有 27 行，实际为：$($RewardTable.Sections.Count)"
-    }
-
-    return [ordered]@{
-        settings = $settings
-        rewards = $rewards
-    }
+    return [ordered]@{ settings = $settings }
 }
 
 function New-ExperienceConfig {
@@ -836,20 +776,6 @@ function New-MysteryShopConfig {
     }
 }
 
-function Get-DifficultyCeiling {
-    param(
-        [Parameter(Mandatory = $true)][int]$Value,
-        [Parameter(Mandatory = $true)][int]$Multiplier
-    )
-
-    $product = $Value * $Multiplier
-    $quotient = [int][math]::Floor($product / 10)
-    if ($product % 10 -ne 0) {
-        return $quotient + 1
-    }
-    return $quotient
-}
-
 function ConvertTo-Base36Pair {
     param([Parameter(Mandatory = $true)][int]$Index)
 
@@ -858,28 +784,6 @@ function ConvertTo-Base36Pair {
     }
     $characters = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
     return [string]$characters[[math]::Floor($Index / 36)] + [string]$characters[$Index % 36]
-}
-
-function New-MonsterScalingAbilitySection {
-    param(
-        [Parameter(Mandatory = $true)][string]$Rawcode,
-        [Parameter(Mandatory = $true)][string]$Parent,
-        [Parameter(Mandatory = $true)][string]$Name,
-        [Parameter(Mandatory = $true)][int[]]$Values
-    )
-
-    if ($Values.Count -ne 4) {
-        throw "隐藏属性技能必须恰有 4 个等级：$Rawcode"
-    }
-    return [ordered]@{
-        _parent = $Parent
-        Name = $Name
-        hero = 0
-        item = 1
-        levels = 4
-        levelSkip = 0
-        DataA = $Values
-    }
 }
 
 function Get-EquipmentRequiredField {
@@ -1118,7 +1022,6 @@ function New-EquipmentConfig {
         [Parameter(Mandatory = $true)][object]$AutoTable,
         [Parameter(Mandatory = $true)][object]$PassiveTable,
         [Parameter(Mandatory = $true)][object]$ComboTable,
-        [Parameter(Mandatory = $true)][object]$DropTable,
         [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Items,
         [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Units
     )
@@ -1256,21 +1159,26 @@ function New-EquipmentConfig {
         }
     }
 
-    $drops = ConvertTo-ObjectConfig $DropTable.Sections
-    $seenDropUnits = @{}
-    foreach ($dropId in $drops.Keys) {
-        $drop = $drops[$dropId]
-        $unitRawcode = [string](Get-EquipmentRequiredField $drop 'unitRawcode' "drop/$dropId")
-        if (-not $Units.Contains($unitRawcode)) { throw "掉落规则引用了不存在的单位：drop/$dropId/$unitRawcode" }
-        if ($seenDropUnits.ContainsKey($unitRawcode)) { throw "同一怪物存在重复掉落规则：$unitRawcode" }
-        $seenDropUnits[$unitRawcode] = $true
-        Assert-EquipmentIntegerRange ([int](Get-EquipmentRequiredField $drop 'chance' "drop/$dropId")) 0 100 "drop/$dropId/chance"
-        $levelMin = [int](Get-EquipmentRequiredField $drop 'levelMin' "drop/$dropId")
-        $levelMax = [int](Get-EquipmentRequiredField $drop 'levelMax' "drop/$dropId")
-        Assert-EquipmentIntegerRange $levelMin 1 5 "drop/$dropId/levelMin"
-        Assert-EquipmentIntegerRange $levelMax 1 5 "drop/$dropId/levelMax"
-        if ($levelMax -lt $levelMin -or [int]$drop.maxDrops -lt 1) { throw "掉落等级或最大掉落数无效：drop/$dropId" }
-        if ([int]$drop.enabled -notin @(0, 1)) { throw "掉落规则启用字段必须为 0 或 1：drop/$dropId" }
+    $poolIds = @{}
+    foreach ($templateId in $templates.Keys) {
+        $poolId = [string]$templates[$templateId].poolId
+        if (-not [string]::IsNullOrWhiteSpace($poolId)) { $poolIds[$poolId] = $true }
+    }
+    foreach ($unitRawcode in $Units.Keys) {
+        $unit = $Units[$unitRawcode]
+        if (-not $unit.Contains('baseUnitId')) { continue }
+        $chance = [int](Get-EquipmentRequiredField $unit 'dropChancePercent' "unit/$unitRawcode")
+        Assert-EquipmentIntegerRange $chance 0 100 "unit/$unitRawcode/dropChancePercent"
+        if ($chance -eq 0) { continue }
+        $poolId = [string](Get-EquipmentRequiredField $unit 'poolId' "unit/$unitRawcode")
+        $levelMin = [int](Get-EquipmentRequiredField $unit 'dropLevelMin' "unit/$unitRawcode")
+        $levelMax = [int](Get-EquipmentRequiredField $unit 'dropLevelMax' "unit/$unitRawcode")
+        $maxDrops = [int](Get-EquipmentRequiredField $unit 'maxDrops' "unit/$unitRawcode")
+        Assert-EquipmentIntegerRange $levelMin 1 5 "unit/$unitRawcode/dropLevelMin"
+        Assert-EquipmentIntegerRange $levelMax 1 5 "unit/$unitRawcode/dropLevelMax"
+        if ($levelMax -lt $levelMin -or $maxDrops -lt 1 -or -not $poolIds.ContainsKey($poolId)) {
+            throw "单位表中的掉落等级、装备池或最大掉落数无效：$unitRawcode"
+        }
     }
 
     return [ordered]@{
@@ -1280,70 +1188,6 @@ function New-EquipmentConfig {
         autoSkills = $autoSkills
         passives = $passives
         combos = $combos
-        drops = $drops
-    }
-}
-
-function New-MonsterScalingData {
-    param(
-        [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Units,
-        [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Profiles
-    )
-
-    $orderedProfiles = @($Profiles.Values)
-    $abilitySections = [ordered]@{}
-    $unitMappings = [ordered]@{}
-    $unitIndex = 0
-    foreach ($rawcode in Get-MonsterUnitRawcodes $Units) {
-        $unit = $Units[$rawcode]
-        $health = Get-RequiredUnitInteger $unit $rawcode 'HP'
-        $damage = Get-RequiredUnitInteger $unit $rawcode 'dmgplus1'
-        $healthAbilities = New-Object System.Collections.Generic.List[string]
-        $attackAbilities = New-Object System.Collections.Generic.List[string]
-        for ($group = 0; $group -lt 5; $group = $group + 1) {
-            $healthRawcode = 'ZH' + (ConvertTo-Base36Pair ($unitIndex * 5 + $group))
-            $attackRawcode = 'ZD' + (ConvertTo-Base36Pair ($unitIndex * 5 + $group))
-            $healthValues = New-Object System.Collections.Generic.List[int]
-            $attackValues = New-Object System.Collections.Generic.List[int]
-            for ($levelOffset = 0; $levelOffset -lt 4; $levelOffset = $levelOffset + 1) {
-                $profile = $orderedProfiles[$group * 4 + $levelOffset]
-                $healthValues.Add((Get-DifficultyCeiling $health $profile.healthMultiplier) - $health)
-                $attackValues.Add((Get-DifficultyCeiling $damage $profile.attackMultiplier) - $damage)
-            }
-            $abilitySections[$healthRawcode] = New-MonsterScalingAbilitySection $healthRawcode 'AIlf' 'PVE 隐藏生命加成' $healthValues.ToArray()
-            $abilitySections[$attackRawcode] = New-MonsterScalingAbilitySection $attackRawcode 'AItg' 'PVE 隐藏攻击加成' $attackValues.ToArray()
-            $healthAbilities.Add($healthRawcode)
-            $attackAbilities.Add($attackRawcode)
-        }
-        $unitMappings[$rawcode] = [ordered]@{
-            healthAbilities = $healthAbilities.ToArray()
-            attackAbilities = $attackAbilities.ToArray()
-        }
-        $unitIndex = $unitIndex + 1
-    }
-
-    $armorAbilities = New-Object System.Collections.Generic.List[string]
-    for ($group = 0; $group -lt 5; $group = $group + 1) {
-        $armorRawcode = 'ZA' + (ConvertTo-Base36Pair $group)
-        $armorValues = New-Object System.Collections.Generic.List[int]
-        for ($levelOffset = 0; $levelOffset -lt 4; $levelOffset = $levelOffset + 1) {
-            $profile = $orderedProfiles[$group * 4 + $levelOffset]
-            $armorValues.Add($profile.armorBonus)
-        }
-        $abilitySections[$armorRawcode] = New-MonsterScalingAbilitySection $armorRawcode 'AId1' 'PVE 隐藏护甲加成' $armorValues.ToArray()
-        $armorAbilities.Add($armorRawcode)
-    }
-
-    if ($unitIndex -ne 38 -or $abilitySections.Count -ne 385) {
-        throw "隐藏属性技能生成数量异常：单位=$unitIndex，技能=$($abilitySections.Count)"
-    }
-    return [ordered]@{
-        luaData = [ordered]@{
-            profiles = $Profiles
-            units = $unitMappings
-            armorAbilities = $armorAbilities.ToArray()
-        }
-        abilitySections = $abilitySections
     }
 }
 
@@ -1374,19 +1218,20 @@ function New-BossAffixAbilitySection {
         [Parameter()][System.Collections.IDictionary]$ExtraFields = @{}
     )
 
-    if ($DataAValues.Count -ne 4) {
-        throw "Boss 词缀技能必须恰有 4 个等级：$Rawcode"
+    if ($DataAValues.Count -ne 1 -and $DataAValues.Count -ne 20) {
+        throw "Boss 词缀技能必须为 1 级常量或 20 级单位变体：$Rawcode"
     }
+    $dataA = if ($DataAValues.Count -eq 1) { $DataAValues[0] } else { $DataAValues }
     $section = [ordered]@{
         _parent = $Parent
         Name = "天灾词缀：$Name"
         Tip = "天灾词缀：$Name"
-        Ubertip = $Description + '|n该词缀随当前 PVE 难度成长。'
+        Ubertip = $Description
         hero = 0
         item = 0
-        levels = 4
+        levels = $DataAValues.Count
         levelSkip = 0
-        DataA = $DataAValues
+        DataA = $dataA
     }
     foreach ($field in $ExtraFields.Keys) {
         $section[$field] = $ExtraFields[$field]
@@ -1446,7 +1291,6 @@ function New-BossAffixIndicatorAbilitySection {
 function Get-BossAffixDataAValue {
     param(
         [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Definition,
-        [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Profile,
         [Parameter()][AllowNull()][System.Collections.IDictionary]$Unit,
         [Parameter()][AllowEmptyString()][string]$UnitRawcode = ''
     )
@@ -1454,40 +1298,20 @@ function Get-BossAffixDataAValue {
     $kind = [string]$Definition.kind
     $baseValue = [int]$Definition.baseValue
     switch ($kind) {
-        'move_speed' { return Get-DifficultyCeiling $baseValue ([int]$Profile.attackMultiplier) }
         'damage_percent' {
-            $baseDamage = Get-RequiredUnitInteger $Unit $UnitRawcode 'dmgplus1'
-            $scaledDamage = Get-DifficultyCeiling $baseDamage ([int]$Profile.attackMultiplier)
-            return [int][math]::Floor(($scaledDamage * $baseValue + 99) / 100)
+            $damage = Get-RequiredUnitInteger $Unit $UnitRawcode 'dmgplus1'
+            return [int][math]::Floor(($damage * $baseValue + 99) / 100)
         }
-        'attack_speed_percent' {
-            return ([decimal]$baseValue * [decimal]$Profile.attackMultiplier) / [decimal]1000
-        }
-        'armor' { return Get-DifficultyCeiling $baseValue ([int]$Profile.healthMultiplier) }
         'health_percent' {
-            $baseHealth = Get-RequiredUnitInteger $Unit $UnitRawcode 'HP'
-            $scaledHealth = Get-DifficultyCeiling $baseHealth ([int]$Profile.healthMultiplier)
-            return [int][math]::Floor(($scaledHealth * $baseValue + 99) / 100)
+            $health = Get-RequiredUnitInteger $Unit $UnitRawcode 'HP'
+            return [int][math]::Floor(($health * $baseValue + 99) / 100)
         }
-        'life_regen' { return Get-DifficultyCeiling $baseValue ([int]$Profile.healthMultiplier) }
-        'bash' { return Get-DifficultyCeiling $baseValue ([int]$Profile.attackMultiplier) }
         'frost' { return 0 }
-        'feedback' { return Get-DifficultyCeiling $baseValue ([int]$Profile.attackMultiplier) }
+        { $_ -in @('move_speed', 'attack_speed_percent', 'armor', 'life_regen', 'bash', 'feedback') } {
+            return $baseValue
+        }
         default { throw "不支持的 Boss 词缀类型：$kind" }
     }
-}
-
-function Get-BossAffixDurationValue {
-    param(
-        [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Definition,
-        [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Profile
-    )
-
-    if ([string]$Definition.kind -ne 'frost') {
-        return [int]$Definition.duration
-    }
-    $scaledDuration = Get-DifficultyCeiling ([int]$Definition.duration) ([int]$Profile.attackMultiplier)
-    return [math]::Min(3, $scaledDuration)
 }
 
 function New-BossAffixData {
@@ -1495,7 +1319,6 @@ function New-BossAffixData {
         [Parameter(Mandatory = $true)][object]$AffixTable,
         [Parameter(Mandatory = $true)][object]$BuffTable,
         [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Units,
-        [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Profiles,
         [Parameter(Mandatory = $true)][System.Collections.IDictionary]$ExistingAbilities
     )
 
@@ -1514,47 +1337,18 @@ function New-BossAffixData {
         throw "Boss 词缀必须恰有 9 条，实际为：$($AffixTable.Sections.Count)"
     }
 
-    $orderedProfiles = @($Profiles.Values)
-    if ($orderedProfiles.Count -ne 20) {
-        throw "Boss 词缀需要 20 档难度配置，实际为：$($orderedProfiles.Count)"
+    $baseRawcodes = @(Get-MonsterUnitRawcodes $Units)
+    $variants = @{}
+    foreach ($rawcode in $Units.Keys) {
+        $unit = $Units[$rawcode]
+        if (-not $unit.Contains('baseUnitId')) { continue }
+        $key = "$($unit.baseUnitId):$([int]$unit.modeId):$([int]$unit.difficultyLevel)"
+        $variants[$key] = $unit
     }
-    $minionRawcodes = New-Object System.Collections.Generic.List[string]
-    for ($block = 1; $block -le 9; $block = $block + 1) {
-        foreach ($rawcode in @("N${block}M1", "N${block}R1", "E${block}M1")) {
-            if (-not $Units.Contains($rawcode)) {
-                throw "Boss 词缀引用的小怪单位不存在：$rawcode"
-            }
-            $minionRawcodes.Add($rawcode)
-        }
-    }
-    foreach ($rawcode in @('G0M1', 'X0M1')) {
-        if (-not $Units.Contains($rawcode)) {
-            throw "Boss 词缀引用的特殊怪单位不存在：$rawcode"
-        }
-        $minionRawcodes.Add($rawcode)
-    }
-    $specialMinionRawcodes = @('G0M1', 'X0M1')
-    $legacyMinionRawcodeCount = $minionRawcodes.Count - $specialMinionRawcodes.Count
-    $legacyGeneratedCount = 0
-    $specialGeneratedCount = 0
-    foreach ($plannedAffixId in $expectedKinds.Keys) {
-        if (-not $AffixTable.Sections.Contains($plannedAffixId)) {
-            throw "Boss 词缀配置缺失：$plannedAffixId"
-        }
-        $plannedKind = [string]$AffixTable.Sections[$plannedAffixId].kind
-        $plannedUnitSpecific = ($plannedKind -eq 'damage_percent' -or $plannedKind -eq 'health_percent')
-        if ($plannedUnitSpecific) {
-            $legacyGeneratedCount = $legacyGeneratedCount + ($legacyMinionRawcodeCount * 5)
-            $specialGeneratedCount = $specialGeneratedCount + ($specialMinionRawcodes.Count * 5)
-        } else {
-            $legacyGeneratedCount = $legacyGeneratedCount + 5
-        }
-    }
-
+    if ($variants.Count -ne 760) { throw "Boss 词缀变体索引必须包含 760 行，实际=$($variants.Count)" }
     $abilitySections = [ordered]@{}
     $affixes = [ordered]@{}
     $rawcodeIndex = 0
-    $specialRawcodeIndex = 0
     $unitSpecificAffixCount = 0
     $globalAffixCount = 0
     foreach ($affixId in $expectedKinds.Keys) {
@@ -1609,74 +1403,69 @@ function New-BossAffixData {
             indicatorBuffRawcode = $indicatorBuffRawcode
         }
 
-        $targets = if ($isUnitSpecific) { $minionRawcodes.ToArray() } else { @('__GLOBAL__') }
-        $targetAbilityMappings = [ordered]@{}
-        foreach ($targetRawcode in $targets) {
-            $abilityRawcodes = New-Object System.Collections.Generic.List[string]
-            for ($group = 0; $group -lt 5; $group = $group + 1) {
+        if ($isUnitSpecific) {
+            $targetAbilityMappings = [ordered]@{}
+            foreach ($baseRawcode in $baseRawcodes) {
                 $dataAValues = New-Object System.Collections.Generic.List[object]
-                $durationValues = New-Object System.Collections.Generic.List[int]
-                for ($levelOffset = 0; $levelOffset -lt 4; $levelOffset = $levelOffset + 1) {
-                    $profile = $orderedProfiles[$group * 4 + $levelOffset]
-                    $unit = if ($isUnitSpecific) { $Units[$targetRawcode] } else { $null }
-                    $dataAValues.Add((Get-BossAffixDataAValue $definition $profile $unit $targetRawcode))
-                    $durationValues.Add((Get-BossAffixDurationValue $definition $profile))
+                for ($modeId = 1; $modeId -le 2; $modeId++) {
+                    for ($level = 1; $level -le 10; $level++) {
+                        $variantKey = "$baseRawcode`:$modeId`:$level"
+                        if (-not $variants.ContainsKey($variantKey)) { throw "Boss 词缀缺少单位变体：$variantKey" }
+                        $variantUnit = $variants[$variantKey]
+                        $variantRawcode = [string]$variantUnit.rawcode
+                        $dataAValues.Add((Get-BossAffixDataAValue $definition $variantUnit $variantRawcode))
+                    }
                 }
-                if ($targetRawcode -in $specialMinionRawcodes) {
-                    $generatedRawcodeIndex = $legacyGeneratedCount + $specialRawcodeIndex
-                    $specialRawcodeIndex = $specialRawcodeIndex + 1
-                } else {
-                    $generatedRawcodeIndex = $rawcodeIndex
-                    $rawcodeIndex = $rawcodeIndex + 1
-                }
-                $rawcode = 'ZB' + (ConvertTo-Base36Pair $generatedRawcodeIndex)
+                $rawcode = 'ZB' + (ConvertTo-Base36Pair $rawcodeIndex)
+                $rawcodeIndex++
                 if ($ExistingAbilities.Contains($rawcode) -or $abilitySections.Contains($rawcode)) {
                     throw "Boss 词缀技能 Rawcode 冲突：$rawcode"
                 }
-                $extraFields = [ordered]@{}
-                switch ([string]$definition.kind) {
-                    'life_regen' {
-                        $extraFields.DataB = @(0, 0, 0, 0)
-                        $extraFields.Area = @(0, 0, 0, 0)
-                        $extraFields.targs = 'self'
-                    }
-                    'bash' {
-                        $extraFields.DataB = @(0, 0, 0, 0)
-                        $extraFields.DataC = @(0, 0, 0, 0)
-                        $extraFields.Dur = @([int]$definition.duration, [int]$definition.duration, [int]$definition.duration, [int]$definition.duration)
-                        $extraFields.HeroDur = @([int]$definition.duration, [int]$definition.duration, [int]$definition.duration, [int]$definition.duration)
-                    }
-                    'frost' {
-                        $extraFields.Dur = $durationValues.ToArray()
-                        $extraFields.HeroDur = $durationValues.ToArray()
-                    }
-                    'feedback' {
-                        $extraFields.DataB = @([int]$definition.secondaryValue, [int]$definition.secondaryValue, [int]$definition.secondaryValue, [int]$definition.secondaryValue)
-                        $extraFields.DataC = $dataAValues.ToArray()
-                        $extraFields.DataD = @([int]$definition.secondaryValue, [int]$definition.secondaryValue, [int]$definition.secondaryValue, [int]$definition.secondaryValue)
-                    }
-                }
-                $abilitySection = New-BossAffixAbilitySection `
+                $abilitySections[$rawcode] = New-BossAffixAbilitySection `
                     $rawcode `
                     (Get-BossAffixParent ([string]$definition.kind)) `
                     ([string]$definition.name) `
                     ([string]$definition.description) `
-                    $dataAValues.ToArray() `
-                    $extraFields
-                # Afra carries required built-in slow data.  Do not overwrite it
-                # with zero values merely because the affix itself has no DataA.
-                if ([string]$definition.kind -eq 'frost') {
-                    [void]$abilitySection.Remove('DataA')
-                }
-                $abilitySections[$rawcode] = $abilitySection
-                $abilityRawcodes.Add($rawcode)
+                    $dataAValues.ToArray()
+                $targetAbilityMappings[$baseRawcode] = $rawcode
             }
-            $targetAbilityMappings[$targetRawcode] = $abilityRawcodes.ToArray()
-        }
-        if ($isUnitSpecific) {
             $affixEntry.unitAbilities = $targetAbilityMappings
         } else {
-            $affixEntry.globalAbilities = $targetAbilityMappings['__GLOBAL__']
+            $dataA = Get-BossAffixDataAValue $definition $null ''
+            $extraFields = [ordered]@{}
+            switch ([string]$definition.kind) {
+                'life_regen' { $extraFields.DataB = 0; $extraFields.Area = 0; $extraFields.targs = 'self' }
+                'bash' {
+                    $extraFields.DataB = 0
+                    $extraFields.DataC = 0
+                    $extraFields.Dur = [int]$definition.duration
+                    $extraFields.HeroDur = [int]$definition.duration
+                }
+                'frost' {
+                    $extraFields.Dur = [int]$definition.duration
+                    $extraFields.HeroDur = [int]$definition.duration
+                }
+                'feedback' {
+                    $extraFields.DataB = [int]$definition.secondaryValue
+                    $extraFields.DataC = [int]$definition.baseValue
+                    $extraFields.DataD = [int]$definition.secondaryValue
+                }
+            }
+            $rawcode = 'ZB' + (ConvertTo-Base36Pair $rawcodeIndex)
+            $rawcodeIndex++
+            if ($ExistingAbilities.Contains($rawcode) -or $abilitySections.Contains($rawcode)) {
+                throw "Boss 词缀技能 Rawcode 冲突：$rawcode"
+            }
+            $abilitySection = New-BossAffixAbilitySection `
+                $rawcode `
+                (Get-BossAffixParent ([string]$definition.kind)) `
+                ([string]$definition.name) `
+                ([string]$definition.description) `
+                @([object]$dataA) `
+                $extraFields
+            if ([string]$definition.kind -eq 'frost') { [void]$abilitySection.Remove('DataA') }
+            $abilitySections[$rawcode] = $abilitySection
+            $affixEntry.globalAbilities = $rawcode
         }
         $abilitySections[$indicatorAbilityRawcode] = New-BossAffixIndicatorAbilitySection `
             $indicatorAbilityRawcode `
@@ -1686,11 +1475,9 @@ function New-BossAffixData {
         $affixes[$affixId] = $affixEntry
     }
 
-    $expectedLegacyGeneratedCount = ($unitSpecificAffixCount * $legacyMinionRawcodeCount + $globalAffixCount) * 5
-    $expectedSpecialGeneratedCount = $unitSpecificAffixCount * $specialMinionRawcodes.Count * 5
-    $expectedGeneratedCount = $expectedLegacyGeneratedCount + $expectedSpecialGeneratedCount
+    $expectedGeneratedCount = ($unitSpecificAffixCount * $baseRawcodes.Count) + $globalAffixCount
     $expectedAbilityCount = $expectedGeneratedCount + $expectedKinds.Count
-    if ($abilitySections.Count -ne $expectedAbilityCount -or $rawcodeIndex -ne $expectedLegacyGeneratedCount -or $specialRawcodeIndex -ne $expectedSpecialGeneratedCount) {
+    if ($abilitySections.Count -ne $expectedAbilityCount -or $rawcodeIndex -ne $expectedGeneratedCount -or $expectedGeneratedCount -ne 83) {
         throw "Boss 词缀技能生成数量异常：技能=$($abilitySections.Count)，索引=$rawcodeIndex"
     }
     return [ordered]@{
@@ -1712,12 +1499,19 @@ function Apply-CombatUnitTypeOverrides {
         $isCombatUnit = (
             $rawcode -eq 'u0W1' -or
             $rawcode -in @('G0M1', 'X0M1') -or
+            $UnitTable.Sections[$rawcode].Contains('baseUnitId') -or
             $rawcode -match '^H[0-9A-Z]{3}$' -or
             $rawcode -match '^[NEB][0-9A-Z]{3}$'
         )
         if (-not $isCombatUnit) { continue }
         $UnitTable.Sections[$rawcode]['atktype1'] = 'hero'
         $UnitTable.Sections[$rawcode]['defType'] = 'hero'
+        if ($UnitTable.Sections[$rawcode].Contains('baseUnitId')) {
+            # 奖励和装备由 Lua 从最终变体行结算，关闭物编原生经验、赏金和掉落，避免重复发放。
+            foreach ($field in @('points', 'bountydice', 'bountysides', 'bountyplus', 'dropItems')) {
+                $UnitTable.Sections[$rawcode][$field] = 0
+            }
+        }
     }
 }
 
@@ -1728,6 +1522,7 @@ function Assert-CombatUnitTypes {
         $isCombatUnit = (
             $rawcode -eq 'u0W1' -or
             $rawcode -in @('G0M1', 'X0M1') -or
+            $Units[$rawcode].Contains('baseUnitId') -or
             $rawcode -match '^H[0-9A-Z]{3}$' -or
             $rawcode -match '^[NEB][0-9A-Z]{3}$'
         )
@@ -2170,13 +1965,11 @@ try {
     $abilityTable = Read-ExcelObjectTable (Join-Path $excelDirectory 'ability.xlsx') 'ability' 'abilityId'
     $itemTable = Read-ExcelObjectTable (Join-Path $excelDirectory 'item.xlsx') 'item' 'itemId'
     $buffTable = Read-ExcelObjectTable (Join-Path $excelDirectory 'buff.xlsx') 'buff' 'buffId'
-    $scalingTable = Read-ExcelTypedRows (Join-Path $excelDirectory 'monster_scaling.xlsx') 'monster_scaling'
     $bossAffixTable = Read-ExcelObjectTable (Join-Path $excelDirectory 'boss_affix.xlsx') 'affix' 'affixId'
     $experiencePath = Join-Path $excelDirectory 'experience.xlsx'
     $experienceSettingsTable = Read-ExcelObjectTable $experiencePath 'settings' 'settingId'
     $experienceLevelTable = Read-ExcelObjectTable $experiencePath 'levels' 'levelId'
     $goldTablePath = Join-Path $excelDirectory 'gold.xlsx'
-    $goldRewardTable = Read-ExcelObjectTable $goldTablePath 'rewards' 'rewardId'
     $goldSettingsTable = Read-ExcelObjectTable $goldTablePath 'settings' 'settingId'
     $mysteryShopPath = Join-Path $excelDirectory 'mystery_shop.xlsx'
     $mysteryShopLocationsTable = Read-ExcelObjectTable $mysteryShopPath 'shops' 'shopId'
@@ -2189,7 +1982,6 @@ try {
     $equipmentAutoTable = Read-ExcelObjectTable $equipmentPath 'auto' 'autoSkillId'
     $equipmentPassiveTable = Read-ExcelObjectTable $equipmentPath 'passive' 'passiveId'
     $equipmentComboTable = Read-ExcelObjectTable $equipmentPath 'combo' 'comboPieceId'
-    $equipmentDropTable = Read-ExcelObjectTable $equipmentPath 'drop' 'dropId'
 
     Apply-RoguelikeObjectOverrides $unitTable $abilityTable
     # 肉鸽覆盖会追加 u0W1 召唤物，因此必须在所有单位覆盖完成后统一写入战斗类型。
@@ -2240,13 +2032,14 @@ try {
     # 初始攻速是项目运行时配置，不属于 Warcraft 单位物编字段。
     foreach ($rawcode in @($unitTable.Sections.Keys)) {
         [void]$unitTable.Sections[$rawcode].Remove('initialAttackSpeedPercent')
+        foreach ($field in @('baseUnitId', 'modeId', 'difficultyLevel', 'tier', 'poolId', 'dropLevelMin', 'dropLevelMax', 'dropChancePercent', 'maxDrops', 'goldRep', 'expReward')) {
+            [void]$unitTable.Sections[$rawcode].Remove($field)
+        }
     }
     $items = ConvertTo-ObjectConfig $itemTable.Sections
-    $profiles = New-MonsterDifficultyProfiles $scalingTable.Rows
     $experienceData = New-ExperienceConfig $experienceSettingsTable $experienceLevelTable
-    $goldData = New-GoldConfig $goldRewardTable $goldSettingsTable
-    $scalingData = New-MonsterScalingData $units $profiles
-    $equipmentData = New-EquipmentConfig $equipmentLevelTable $equipmentTemplateTable $equipmentAutoTable $equipmentPassiveTable $equipmentComboTable $equipmentDropTable $items $units
+    $goldData = New-GoldConfig $goldSettingsTable
+    $equipmentData = New-EquipmentConfig $equipmentLevelTable $equipmentTemplateTable $equipmentAutoTable $equipmentPassiveTable $equipmentComboTable $items $units
     $roguelikeData = $null
     $attributeData = $null
     $roguelikePath = Join-Path $excelDirectory 'roguelike.xlsx'
@@ -2263,16 +2056,10 @@ try {
     }
     $abilitySections = [ordered]@{}
     foreach ($rawcode in $abilityTable.Sections.Keys) {
-        if ($rawcode -match '^(?:ZH|ZD|ZA|ZB|ZC)[0-9A-Z]{2}$') {
-            throw "怪物难度或 Boss 词缀技能 Rawcode 由 Excel 配置自动生成，不能写入 ability.xlsx：$rawcode"
+        if ($rawcode -match '^(?:ZB|ZC)[0-9A-Z]{2}$') {
+            throw "Boss 词缀技能 Rawcode 由生成器分配，不能写入 ability.xlsx：$rawcode"
         }
         $abilitySections[$rawcode] = $abilityTable.Sections[$rawcode]
-    }
-    foreach ($rawcode in $scalingData.abilitySections.Keys) {
-        if ($abilitySections.Contains($rawcode)) {
-            throw "成长技能 Rawcode 冲突：$rawcode"
-        }
-        $abilitySections[$rawcode] = $scalingData.abilitySections[$rawcode]
     }
     $equipmentStatAbilities = New-EquipmentStatAbilities $abilitySections
     foreach ($rawcode in $equipmentStatAbilities.abilitySections.Keys) {
@@ -2281,7 +2068,7 @@ try {
         }
         $abilitySections[$rawcode] = $equipmentStatAbilities.abilitySections[$rawcode]
     }
-    $bossAffixData = New-BossAffixData $bossAffixTable $buffTable $units $profiles $abilitySections
+    $bossAffixData = New-BossAffixData $bossAffixTable $buffTable $units $abilitySections
     foreach ($rawcode in $bossAffixData.abilitySections.Keys) {
         if ($abilitySections.Contains($rawcode)) {
             throw "Boss 词缀技能 Rawcode 冲突：$rawcode"
@@ -2305,14 +2092,13 @@ try {
         $lniDefinitions += @{ Name = 'roguelike.ini'; Data = $roguelikeData.lni }
     }
     $luaDefinitions = @(
-        @{ Name = 'units.lua'; Annotations = @('---@class GeneratedUnitConfig', '---@field rawcode string 单位 Rawcode', '---@field _parent string|nil 原始单位模板', '---@field Name string|nil 单位名称', '---@field Ubertip string|nil 单位说明', '---@field heroAbilList string|nil 英雄技能 Rawcode 列表', '---@field cool1 number|nil 基础攻击间隔（秒）', '---@field dmgpt1 number|nil 攻击前摇（秒）；英雄由 unit.xlsx 配置并写入物编', '---@field backsw1 number|nil 攻击后摇（秒）；英雄由 unit.xlsx 配置并写入物编', '---@field initialAttackSpeedPercent integer|nil 英雄初始总攻速百分比；100%=标准，500%=5 倍；改表后须重新生成地图并重新开局', '---@field expReward integer|nil 单位死亡产生的基础经验'); Data = $units },
+        @{ Name = 'units.lua'; Annotations = @('---@class GeneratedUnitConfig', '---@field rawcode string 单位 Rawcode', '---@field _parent string|nil 原始单位模板', '---@field Name string|nil 单位名称', '---@field Ubertip string|nil 单位说明', '---@field heroAbilList string|nil 英雄技能 Rawcode 列表', '---@field cool1 number|nil 基础攻击间隔（秒）', '---@field dmgpt1 number|nil 攻击前摇（秒）；英雄由 unit.xlsx 配置并写入物编', '---@field backsw1 number|nil 攻击后摇（秒）；英雄由 unit.xlsx 配置并写入物编', '---@field initialAttackSpeedPercent integer|nil 英雄初始总攻速百分比；100%=标准，500%=5 倍；改表后须重新生成地图并重新开局', '---@field baseUnitId string|nil PVE 难度变体对应的基础怪物 ID', '---@field modeId integer|nil PVE 模式编号：1 普通，2 困难', '---@field difficultyLevel integer|nil PVE 难度等级 1–10', '---@field tier integer|nil 普通怪与精英的军团阶数（名称后缀“一阶”至“九阶”）', '---@field goldRep integer|nil 该物编变体的最终金币奖励', '---@field expReward integer|nil 该物编变体的最终经验奖励', '---@field poolId string|nil 装备掉落池 ID', '---@field dropLevelMin integer|nil 装备最低掉落等级', '---@field dropLevelMax integer|nil 装备最高掉落等级', '---@field dropChancePercent integer|nil 装备掉落概率；0 表示不掉落', '---@field maxDrops integer|nil 最大掉落数'); Data = $units },
         @{ Name = 'abilities.lua'; Annotations = @('---@class GeneratedAbilityConfig', '---@field rawcode string 技能 Rawcode', '---@field _parent string|nil 原始技能模板', '---@field Name string|nil 技能名称', '---@field Ubertip string|nil 技能说明', '---@field Cool integer|integer[]|nil 冷却时间', '---@field Rng integer|integer[]|nil 施法距离', '---@field Area integer|integer[]|nil 影响范围'); Data = $abilities },
         @{ Name = 'items.lua'; Annotations = @('---@class GeneratedItemConfig', '---@field rawcode string 道具 Rawcode', '---@field _parent string|nil 原始道具模板', '---@field Name string|nil 道具名称', '---@field Ubertip string|nil 道具说明'); Data = $items },
         @{ Name = 'buffs.lua'; Annotations = @('---@class GeneratedBuffConfig', '---@field rawcode string Buff Rawcode', '---@field _parent string|nil 原始 Buff 模板', '---@field Bufftip string|nil Buff 名称', '---@field Buffubertip string|nil Buff 说明'); Data = $buffs },
         @{ Name = 'regions.lua'; Annotations = @('---@class GeneratedRegionConfig', '---@field name string 区域名称', '---@field minX number 左边界', '---@field minY number 下边界', '---@field maxX number 右边界', '---@field maxY number 上边界'); Data = $regions },
-        @{ Name = 'monster_scaling.lua'; Annotations = @('---@class MonsterScalingProfile', '---@field modeId integer PVE 模式编号', '---@field level integer 难度等级', '---@field multiplier integer 十倍定点倍率，10 代表 1 倍', '---@field healthMultiplier integer 十倍定点生命倍率', '---@field attackMultiplier integer 十倍定点攻击倍率', '---@field armorBonus integer 护甲加成', '---@field goldMultiplierPercent integer 金币倍率百分比', '---@field experienceMultiplierPercent integer 经验倍率百分比', '---@field groupIndex integer 隐藏属性技能组下标', '---@field abilityLevel integer 隐藏属性技能等级', '---@class MonsterScalingUnitAbilities', '---@field healthAbilities string[] 生命加成技能组', '---@field attackAbilities string[] 攻击加成技能组'); Data = $scalingData.luaData },
-        @{ Name = 'boss_affixes.lua'; Annotations = @('---@class BossAffixConfig', '---@field affixId string 词缀编号', '---@field bossRawcode string 对应 Boss Rawcode', '---@field name string 词缀显示名称', '---@field description string 词缀说明', '---@field kind string 原生物编词缀类型', '---@field baseValue integer 基础数值', '---@field secondaryValue integer 次级数值', '---@field duration integer 基础持续时间', '---@field refillLife boolean 添加后是否回满生命', '---@field indicatorAbilityRawcode string 状态栏图标辅助光环 Rawcode', '---@field indicatorBuffRawcode string 状态栏图标 Buff Rawcode', '---@field globalAbilities string[]|nil 五个难度技能组 Rawcode', '---@field unitAbilities table<string, string[]>|nil 按小怪 Rawcode 生成的五个难度技能组'); Data = $bossAffixData.luaData },
-        @{ Name = 'gold.lua'; Annotations = @('---@class GoldSettings', '---@field initialGold integer 本局初始金币', '---@field maxGoldDropBonusPercent integer 金币掉落加成上限', '---@field maxGold integer 原生金币上限', '---@class GoldConfig', '---@field settings GoldSettings', '---@field rewards table<string, table<string, integer>> 怪物金币奖励'); Data = $goldData },
+        @{ Name = 'boss_affixes.lua'; Annotations = @('---@class BossAffixConfig', '---@field affixId string 词缀编号', '---@field bossRawcode string 对应 Boss Rawcode', '---@field name string 词缀显示名称', '---@field description string 词缀说明', '---@field kind string 原生物编词缀类型', '---@field baseValue integer 基础数值', '---@field secondaryValue integer 次级数值', '---@field duration integer 基础持续时间', '---@field refillLife boolean 添加后是否回满生命', '---@field indicatorAbilityRawcode string 状态栏图标辅助光环 Rawcode', '---@field indicatorBuffRawcode string 状态栏图标 Buff Rawcode', '---@field globalAbilities string|nil 各难度恒定强度的全局技能 Rawcode', '---@field unitAbilities table<string, string>|nil 基础怪物 ID 到其 20 级变体技能的映射'); Data = $bossAffixData.luaData },
+        @{ Name = 'gold.lua'; Annotations = @('---@class GoldSettings', '---@field initialGold integer 本局初始金币', '---@field maxGoldDropBonusPercent integer 金币掉落加成上限', '---@field maxGold integer 原生金币上限', '---@class GoldConfig', '---@field settings GoldSettings 怪物金币奖励已写入 units.lua 的 goldRep 字段'); Data = $goldData },
         @{ Name = 'experience.lua'; Annotations = @('---@class ExperienceSettings', '---@field maxLevel integer 英雄最大等级', '---@field initialExpBonusPercent integer 初始经验加成百分比', '---@field maxExpBonusPercent integer 经验加成上限百分比', '---@class ExperienceLevelConfig', '---@field levelId string 等级配置 ID', '---@field level integer 英雄等级', '---@field requiredExp integer 升到下一级所需经验', '---@class ExperienceConfig', '---@field version integer 配置版本', '---@field settings ExperienceSettings', '---@field levels table<string, ExperienceLevelConfig> 等级配置'); Data = $experienceData.luaData }
         @{ Name = 'mystery_shop.lua'; Annotations = @('---@class MysteryShopLocation', '---@field shopId string 商店 ID', '---@field blockId integer 地图区域编号', '---@field sourcePoint string 参考刷怪点', '---@field unitRawcode string 商店单位 Rawcode', '---@field x integer 世界坐标 X', '---@field y integer 世界坐标 Y', '---@field facing integer 朝向', '---@field enabled integer 启用状态', '---@class MysteryShopStock', '---@field stockId string 库存 ID', '---@field shopId string 商店 ID', '---@field itemRawcode string 商品 Rawcode', '---@field productKind string 商品类型：box/health/mana', '---@field boxLevel integer 装备箱等级；消耗品为 0', '---@field price integer 金币价格', '---@field initialStock integer 初始库存', '---@field maxStock integer 最大库存', '---@field stockRegen integer 补货间隔秒数', '---@field enabled integer 启用状态', '---@class MysteryShopConsumable', '---@field rawcode string 消耗品 Rawcode', '---@field kind string 恢复类型：health/mana', '---@field abilityRawcode string 物品技能 Rawcode', '---@field healPercent integer 最大生命恢复百分比', '---@field manaPercent integer 最大法力恢复百分比', '---@field price integer 金币价格', '---@field stockRegen integer 补货间隔秒数', '---@field enabled integer 启用状态', '---@class MysteryShopConfig', '---@field version integer 配置版本', '---@field refillIntervalSeconds integer 装备箱补货间隔秒数', '---@field consumableRefillIntervalSeconds integer 消耗品补货间隔秒数', '---@field shops table<string, MysteryShopLocation>', '---@field stock table<string, MysteryShopStock>', '---@field boxByRawcode table<string, integer>', '---@field consumableByRawcode table<string, MysteryShopConsumable>'); Data = $mysteryShopData }
         ,@{ Name = 'equipment.lua'; Annotations = @(
@@ -2355,12 +2141,6 @@ try {
             '---@field comboPieceId string 套装部件 ID',
             '---@field setId string 套装 ID',
             '---@field pieceIndex integer 部件序号',
-            '---@class EquipmentDropConfig',
-            '---@field dropId string 掉落规则 ID',
-            '---@field unitRawcode string 怪物 Rawcode',
-            '---@field chance integer 掉落概率',
-            '---@field levelMin integer 最低等级',
-            '---@field levelMax integer 最高等级',
             '---@class EquipmentStatAbilityConfig',
             '---@field healthDecrease string[] 生命减少个位/十位/百位/千位/万位/十万位/百万位技能 Rawcode',
             '---@field healthIncrease string[] 生命增加个位/十位/百位/千位/万位/十万位/百万位技能 Rawcode',

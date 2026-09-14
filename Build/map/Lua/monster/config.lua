@@ -4,7 +4,6 @@ local regions = require "config.regions"
 local units = require "config.units"
 local abilities = require "config.abilities"
 local buffs = require "config.buffs"
-local scaling = require "config.monster_scaling"
 local boss_affixes = require "config.boss_affixes"
 local mode_config = require "runMode.config"
 
@@ -20,14 +19,15 @@ local module = {}
 ---@class MonsterBlock
 ---@field id integer 区域编号
 ---@field region MonsterRegion 普通怪归属区域
----@field normalMeleeRawcode string 近战普通怪 Rawcode
----@field normalRangedRawcode string 远程普通怪 Rawcode
----@field eliteRawcode string 精英 Rawcode
 
 ---@class EliteSpawnPoint
 ---@field blockId integer 所属区域编号
 ---@field index integer 区域内点位编号
 ---@field region MonsterRegion 精英点区域
+
+---@class TierMonsterUnits
+---@field normalMeleeRawcode string 近战普通怪 Rawcode
+---@field normalRangedRawcode string 远程普通怪 Rawcode
 ---@field eliteRawcode string 精英 Rawcode
 
 ---@class BossSpawnPoint
@@ -45,8 +45,8 @@ local module = {}
 ---@field refillLife boolean 添加后是否回满生命
 ---@field indicatorAbilityRawcode string 状态栏图标辅助光环 Rawcode
 ---@field indicatorBuffRawcode string 状态栏图标 Buff Rawcode
----@field globalAbilities string[]|nil 五个难度技能组 Rawcode
----@field unitAbilities table<string, string[]>|nil 按小怪 Rawcode 的五个难度技能组
+---@field globalAbilities string|nil 全局恒定强度词缀 Rawcode
+---@field unitAbilities table<string, string>|nil 基础怪物 ID 到单位变体词缀 Rawcode 的映射
 
 ---@class MonsterActiveAbility
 ---@field rawcode string 技能 Rawcode
@@ -125,24 +125,83 @@ end
 module.SPECIAL_GOLD_RAWCODE = require_unit("G0M1")
 module.SPECIAL_EXPERIENCE_RAWCODE = require_unit("X0M1")
 
+local variants_by_base = {}
+local variant_count = 0
+for rawcode, unit in pairs(units) do
+    if unit.baseUnitId ~= nil then
+        local mode_id = normalize_integer(unit.modeId, nil)
+        local level = normalize_integer(unit.difficultyLevel, nil)
+        if type(mode_id) ~= "number" or (mode_id ~= 1 and mode_id ~= 2)
+            or type(level) ~= "number" or level < 1 or level > 10 then
+            error("PVE 怪物变体元数据无效：" .. tostring(rawcode))
+        end
+        local key = string.format("%d:%d", mode_id, level)
+        local base_rawcode = unit.baseUnitId
+        variants_by_base[base_rawcode] = variants_by_base[base_rawcode] or {}
+        if variants_by_base[base_rawcode][key] ~= nil then
+            error("PVE 怪物难度组合重复：" .. tostring(base_rawcode) .. "/" .. key)
+        end
+        variants_by_base[base_rawcode][key] = rawcode
+        variant_count = variant_count + 1
+    end
+end
+if variant_count ~= 760 then error("PVE 怪物变体必须恰有 760 个，实际=" .. tostring(variant_count)) end
+for base_rawcode, variants in pairs(variants_by_base) do
+    for mode_id = 1, 2 do
+        for level = 1, 10 do
+            local key = string.format("%d:%d", mode_id, level)
+            if variants[key] == nil then
+                error("PVE 怪物变体缺失：" .. tostring(base_rawcode) .. "/" .. key)
+            end
+        end
+    end
+end
+
+-- 军团阶位来自 unit.xlsx 名称后缀写入的 tier 字段，与地图区域编号解耦。
+-- 只把每种模板的普通模式 1 级 Rawcode 作为基础模板，其余难度由 variant 映射继续选择。
+local tier_units_by_tier = {}
+for rawcode, unit in pairs(units) do
+    local tier = normalize_integer(unit.tier, nil)
+    if tier ~= nil then
+        if tier < 1 or tier > 9 then
+            error("PVE 怪物阶数必须为 1 到 9：" .. tostring(rawcode))
+        end
+        if unit.baseUnitId == rawcode
+            and normalize_integer(unit.modeId, nil) == 1
+            and normalize_integer(unit.difficultyLevel, nil) == 1 then
+            local role
+            if string.match(rawcode, "^N[1-9]M1$") then
+                role = "normalMeleeRawcode"
+            elseif string.match(rawcode, "^N[1-9]R1$") then
+                role = "normalRangedRawcode"
+            elseif string.match(rawcode, "^E[1-9]M1$") then
+                role = "eliteRawcode"
+            else
+                error("PVE 阶数模板 Rawcode 无法识别：" .. tostring(rawcode))
+            end
+            tier_units_by_tier[tier] = tier_units_by_tier[tier] or {}
+            if tier_units_by_tier[tier][role] ~= nil then
+                error(string.format("PVE 阶数模板重复：阶数=%d，类别=%s", tier, role))
+            end
+            tier_units_by_tier[tier][role] = rawcode
+        end
+    end
+end
+for tier = 1, 9 do
+    local templates = tier_units_by_tier[tier]
+    if templates == nil
+        or templates.normalMeleeRawcode == nil
+        or templates.normalRangedRawcode == nil
+        or templates.eliteRawcode == nil then
+        error("PVE 阶数配置不完整，需包含近战普通怪、远程普通怪和精英：阶数=" .. tostring(tier))
+    end
+end
+module.MAX_MONSTER_TIER = 9
+
 ---@class MonsterDifficulty
 ---@field modeId integer PVE 模式编号
 ---@field level integer PVE 难度等级
----@field multiplier integer 十倍定点倍率，10 代表 1 倍
----@field healthMultiplier integer 十倍定点生命倍率
----@field attackMultiplier integer 十倍定点攻击倍率
----@field armorBonus integer 怪物护甲加成
----@field goldMultiplierPercent integer 金币倍率百分比
----@field experienceMultiplierPercent integer 经验倍率百分比
----@field groupIndex integer 隐藏属性技能组下标
----@field abilityLevel integer 隐藏属性技能等级
-
----@class MonsterUnitBaseStats
----@field health integer 物编基础最大生命
----@field armor integer 物编基础护甲
----@field damageBase integer 物编攻击基础值
----@field diceCount integer 物编攻击骰子数量
----@field diceSides integer 物编攻击骰子面数
+---@field variantIndex integer 当前难度变体索引
 
 ---@type MonsterBlock[]
 module.BLOCKS = {}
@@ -158,9 +217,6 @@ for block_id = 1, 9 do
     local block = {
         id = block_id,
         region = require_region("Map_Block_" .. block_id),
-        normalMeleeRawcode = require_unit("N" .. block_id .. "M1"),
-        normalRangedRawcode = require_unit("N" .. block_id .. "R1"),
-        eliteRawcode = require_unit("E" .. block_id .. "M1"),
     }
     table.insert(module.BLOCKS, block)
 
@@ -169,7 +225,6 @@ for block_id = 1, 9 do
             blockId = block_id,
             index = point_index,
             region = require_region(string.format("MonsterPoint_%d_%d", block_id, point_index)),
-            eliteRawcode = block.eliteRawcode,
         })
     end
 
@@ -181,15 +236,9 @@ for block_id = 1, 9 do
     })
 end
 
-local function validate_affix_ability_list(affix, ability_list, context)
-    if type(ability_list) ~= "table" or #ability_list ~= 5 then
-        error("Boss 词缀技能组无效：" .. context)
-    end
-    for group_index = 1, 5 do
-        local ability_rawcode = ability_list[group_index]
-        if type(ability_rawcode) ~= "string" or abilities[ability_rawcode] == nil then
-            error("Boss 词缀技能对象缺失：" .. context .. "/" .. tostring(ability_rawcode))
-        end
+local function validate_affix_ability(ability_rawcode, context)
+    if type(ability_rawcode) ~= "string" or abilities[ability_rawcode] == nil then
+        error("Boss 词缀技能对象缺失：" .. context .. "/" .. tostring(ability_rawcode))
     end
 end
 
@@ -215,27 +264,20 @@ for boss_index = 1, #module.BOSS_POINTS do
         error("Boss 词缀状态栏 Buff 对象缺失：" .. affix_id)
     end
     if affix.globalAbilities ~= nil then
-        validate_affix_ability_list(affix, affix.globalAbilities, affix_id)
+        validate_affix_ability(affix.globalAbilities, affix_id)
     elseif type(affix.unitAbilities) == "table" then
         for block_id = 1, 9 do
             for _, unit_rawcode in ipairs({
                 "N" .. block_id .. "M1",
                 "N" .. block_id .. "R1",
                 "E" .. block_id .. "M1",
+                "B" .. block_id .. "M1",
             }) do
-                validate_affix_ability_list(
-                    affix,
-                    affix.unitAbilities[unit_rawcode],
-                    affix_id .. "/" .. unit_rawcode
-                )
+                validate_affix_ability(affix.unitAbilities[unit_rawcode], affix_id .. "/" .. unit_rawcode)
             end
         end
         for _, unit_rawcode in ipairs({ module.SPECIAL_GOLD_RAWCODE, module.SPECIAL_EXPERIENCE_RAWCODE }) do
-            validate_affix_ability_list(
-                affix,
-                affix.unitAbilities[unit_rawcode],
-                affix_id .. "/" .. unit_rawcode
-            )
+            validate_affix_ability(affix.unitAbilities[unit_rawcode], affix_id .. "/" .. unit_rawcode)
         end
     else
         error("Boss 词缀缺少技能映射：" .. affix_id)
@@ -315,6 +357,13 @@ function module.get_block(block_id)
     return module.BLOCKS[block_id]
 end
 
+--- 按全局军团阶数读取普通怪与精英基础模板；金币怪和经验怪不经过此映射。
+---@param tier integer 军团阶数 1–9
+---@return TierMonsterUnits|nil templates 对应阶位的单位模板
+function module.get_tier_units(tier)
+    return tier_units_by_tier[tier]
+end
+
 --- 获取自动生成的单位名称；配置缺失时由调用方回退到 Rawcode。
 ---@param rawcode string 单位 Rawcode
 ---@return string|nil name 单位名称
@@ -326,13 +375,37 @@ function module.get_unit_name(rawcode)
     return unit.Name
 end
 
---- 读取怪物物编中的基础经验；特殊经验怪使用其出生区域普通怪经验覆盖此值。
+--- 读取该难度变体物编中的最终经验奖励。
 ---@param rawcode string 单位 Rawcode
 ---@return integer experience 基础经验
 function module.get_unit_experience_reward(rawcode)
     local unit = units[rawcode]
     if unit == nil then return 0 end
     return math.max(0, normalize_integer(unit.expReward, 0))
+end
+
+--- 读取该难度变体物编中的最终金币奖励。
+---@param rawcode string 单位 Rawcode
+---@return integer gold 最终金币奖励
+function module.get_unit_gold_reward(rawcode)
+    local unit = units[rawcode]
+    if unit == nil then return 0 end
+    return math.max(0, normalize_integer(unit.goldRep, 0))
+end
+
+--- 根据基础怪物 ID 和当前难度取得唯一的变体 Rawcode。
+---@param rawcode string 基础或已变体化的单位 Rawcode
+---@param current_difficulty MonsterDifficulty|nil 难度；省略时使用本局难度
+---@return string|nil variant_rawcode 变体 Rawcode
+function module.get_variant_rawcode(rawcode, current_difficulty)
+    local unit = units[rawcode]
+    if unit == nil then return nil end
+    local base_rawcode = unit.baseUnitId or rawcode
+    local selected = current_difficulty or module.current_difficulty
+    if type(selected) ~= "table" then return nil end
+    local variants = variants_by_base[base_rawcode]
+    if variants == nil then return nil end
+    return variants[string.format("%d:%d", selected.modeId, selected.level)]
 end
 
 --- 获取指定存活 Boss 对应的天灾词缀。
@@ -367,25 +440,22 @@ function module.get_boss_affix_ability(affix, unit_rawcode, current_difficulty)
     if type(affix) ~= "table" or type(current_difficulty) ~= "table" then
         return nil, nil, false
     end
-    local ability_list = nil
+    local ability_rawcode
     if type(affix.unitAbilities) == "table" then
-        ability_list = affix.unitAbilities[unit_rawcode]
+        local unit = units[unit_rawcode]
+        local base_rawcode = unit and (unit.baseUnitId or unit_rawcode) or unit_rawcode
+        ability_rawcode = affix.unitAbilities[base_rawcode]
+        if type(ability_rawcode) == "string" then
+            local ability_level = (current_difficulty.modeId - 1) * 10 + current_difficulty.level
+            if abilities[ability_rawcode] == nil then return nil, nil, false end
+            return ability_rawcode, ability_level, affix.refillLife == true
+        end
     end
-    if ability_list == nil then
-        ability_list = affix.globalAbilities
-    end
-    local group_index = current_difficulty.groupIndex
-    local ability_level = current_difficulty.abilityLevel
-    if type(ability_list) ~= "table"
-        or type(group_index) ~= "number"
-        or type(ability_level) ~= "number" then
-        return nil, nil, false
-    end
-    local ability_rawcode = ability_list[group_index]
+    ability_rawcode = affix.globalAbilities
     if type(ability_rawcode) ~= "string" or abilities[ability_rawcode] == nil then
         return nil, nil, false
     end
-    return ability_rawcode, ability_level, affix.refillLife == true
+    return ability_rawcode, 1, affix.refillLife == true
 end
 
 --- 获取单位静态技能中需要 AI 主动施放的技能。
@@ -433,47 +503,13 @@ function module.create_difficulty(selection)
         and selection.modeId ~= mode_config.MODE_ID.PVE_HARD then
         return nil, "PVE 模式编号无效"
     end
-    local profile = scaling.profiles[string.format("%d:%d", selection.modeId, selection.level)]
-    if profile == nil then
-        return nil, "PVE 难度配置缺失"
-    end
-    return {
+    local difficulty = {
         modeId = selection.modeId,
         level = selection.level,
-        multiplier = profile.multiplier,
-        healthMultiplier = profile.healthMultiplier,
-        attackMultiplier = profile.attackMultiplier,
-        armorBonus = profile.armorBonus,
-        goldMultiplierPercent = profile.goldMultiplierPercent,
-        experienceMultiplierPercent = profile.experienceMultiplierPercent,
-        groupIndex = profile.groupIndex,
-        abilityLevel = profile.abilityLevel,
-    }, nil
-end
-
---- 读取单位物编中的基础生命、护甲与攻击骰数据。
----@param rawcode string 单位 Rawcode
----@return MonsterUnitBaseStats|nil stats 基础属性；字段缺失时为空
-function module.get_unit_base_stats(rawcode)
-    local unit = units[rawcode]
-    if unit == nil then
-        return nil
-    end
-    local health = normalize_integer(unit.HP, nil)
-    local armor = normalize_integer(unit.def, nil)
-    local damage_base = normalize_integer(unit.dmgplus1, nil)
-    local dice_count = normalize_integer(unit.dice1, nil)
-    local dice_sides = normalize_integer(unit.sides1, nil)
-    if health == nil or armor == nil or damage_base == nil or dice_count == nil or dice_sides == nil then
-        return nil
-    end
-    return {
-        health = health,
-        armor = armor,
-        damageBase = damage_base,
-        diceCount = dice_count,
-        diceSides = dice_sides,
+        variantIndex = (selection.modeId - 1) * 10 + selection.level,
     }
+    module.current_difficulty = difficulty
+    return difficulty, nil
 end
 
 return module
