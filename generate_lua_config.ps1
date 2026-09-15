@@ -2,7 +2,9 @@
     [Parameter()]
     [string]$Root,
     [Parameter()]
-    [string]$ExcelRoot
+    [string]$ExcelRoot,
+    [Parameter()]
+    [string]$LuaRoot
 )
 
 Set-StrictMode -Version Latest
@@ -13,6 +15,9 @@ if ([string]::IsNullOrWhiteSpace($Root)) {
 }
 if ([string]::IsNullOrWhiteSpace($ExcelRoot)) {
     $ExcelRoot = Join-Path $PSScriptRoot 'excelCfg'
+}
+if ([string]::IsNullOrWhiteSpace($LuaRoot)) {
+    $LuaRoot = Join-Path $Root '..\scripts\globals\config'
 }
 
 function ConvertTo-InvariantInteger {
@@ -219,7 +224,8 @@ function Write-LuaModule {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
         [Parameter(Mandatory = $true)][string[]]$Annotations,
-        [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Data
+        [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Data,
+        [Parameter(Mandatory = $true)][string]$ConfigKey
     )
 
     $lines = New-Object System.Collections.Generic.List[string]
@@ -228,7 +234,10 @@ function Write-LuaModule {
     foreach ($annotation in $Annotations) {
         $lines.Add($annotation)
     }
-    $lines.Add('return ' + (ConvertTo-LuaValue $Data 0))
+    $lines.Add('JiuDou = JiuDou or {}')
+    $lines.Add('JiuDou.config = JiuDou.config or {}')
+    $lines.Add('JiuDou.config.' + $ConfigKey + ' = ' + (ConvertTo-LuaValue $Data 0))
+    $lines.Add('return JiuDou.config.' + $ConfigKey)
     $lines.Add('')
     [System.IO.File]::WriteAllText($Path, [string]::Join("`n", $lines), [System.Text.UTF8Encoding]::new($false))
 }
@@ -2141,7 +2150,7 @@ try {
     $excelDirectory = [System.IO.Path]::GetFullPath($ExcelRoot)
     $tableDirectory = Join-Path $projectRoot 'table'
     $mapDirectory = Join-Path $projectRoot 'map'
-    $configDirectory = Join-Path $mapDirectory 'Lua\config'
+    $configDirectory = [System.IO.Path]::GetFullPath($LuaRoot)
 
     if (-not (Test-Path -LiteralPath $projectRoot -PathType Container)) {
         throw "找不到 w2l 项目根目录：$projectRoot"
@@ -2409,7 +2418,8 @@ try {
         }
         foreach ($definition in $luaDefinitions) {
             $sourcePath = Join-Path $stagingDirectory $definition.Name
-            Write-LuaModule $sourcePath $definition.Annotations $definition.Data
+            $configKey = [System.IO.Path]::GetFileNameWithoutExtension($definition.Name)
+            Write-LuaModule $sourcePath $definition.Annotations $definition.Data $configKey
             $stagedOutputs.Add([pscustomobject]@{ Source = $sourcePath; Destination = Join-Path $configDirectory $definition.Name })
         }
         foreach ($output in $stagedOutputs) {

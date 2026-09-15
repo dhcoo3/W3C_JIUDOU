@@ -1,0 +1,3 @@
+# JiuDou 项目扩展库配置。
+# 业务脚本统一位于 scripts/globals/jiudou，library 仅保留给项目级扩展。
+require: []
