@@ -9,6 +9,7 @@ local popup = require "rogue.ui.popup"
 local hero_stats = require "hero.stats"
 local wukong = require "rogue.skills.wukong"
 local arthas = require "rogue.skills.arthas"
+local houyi = require "rogue.skills.houyi"
 local hero_damage = require "rogue.skills.hero_damage"
 local debug = require "rogue.debug"
 
@@ -369,6 +370,7 @@ function module.start(hero_results, seed)
     start_countdown()
     wukong.start(hero_results or {}, session_seed)
     arthas.start(hero_results or {})
+    houyi.start(hero_results or {})
     hero_damage.start(hero_results or {}, session_seed)
     debug.start(module)
     print(string.format("肉鸽系统已启动：玩家=%d，同步=%s", count_states(), tostring(sync_available)))

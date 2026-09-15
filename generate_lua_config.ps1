@@ -348,10 +348,10 @@ function Validate-MonsterExperience {
             throw "每阶必须恰有 60 个普通怪/精英难度变体：阶数=$tier / 实际=$($tierVariantCounts[[string]$tier])"
         }
     }
-    # The six non-PVE rows, plus the Wukong and Arthas summon units, sit beside the PVE variants.
-    if ($Units.Count -ne 768 -or ($Units.Count - $variantCount) -ne 8 -or
-        -not $Units.Contains('u0W1') -or -not $Units.Contains('u0E1')) {
-        throw "单位表应包含 760 个 PVE 变体、6 个未扩展表格单位和 u0W1/u0E1 召唤物，实际单位数=$($Units.Count)"
+    # 六个未扩展表格单位、两名召唤物和后羿的隐藏减速施法马甲与 PVE 变体并存。
+    if ($Units.Count -ne 769 -or ($Units.Count - $variantCount) -ne 9 -or
+        -not $Units.Contains('u0W1') -or -not $Units.Contains('u0E1') -or -not $Units.Contains('u0H1')) {
+        throw "单位表应包含 760 个 PVE 变体、6 个未扩展表格单位、u0W1/u0E1 召唤物和 u0H1 施法马甲，实际单位数=$($Units.Count)"
     }
     foreach ($base in $baseRawcodes) {
         for ($mode = 1; $mode -le 2; $mode++) {
@@ -1572,12 +1572,27 @@ function Apply-RoguelikeObjectOverrides {
         if (-not $AbilityTable.Sections.Contains($rawcode)) { throw "伤害技能物编缺失：$rawcode" }
         $AbilityTable.Sections[$rawcode]['DataA'] = @(0, 0, 0)
     }
-    foreach ($rawcode in @('A0N4', 'A0B4')) {
+    foreach ($rawcode in @('A0B4')) {
         if (-not $AbilityTable.Sections.Contains($rawcode)) { throw "被动伤害技能物编缺失：$rawcode" }
         $AbilityTable.Sections[$rawcode]['DataA'] = @(0, 0)
         $AbilityTable.Sections[$rawcode]['DataB'] = @(0, 0)
         if ($AbilityTable.Sections[$rawcode].Contains('DataC')) { $AbilityTable.Sections[$rawcode]['DataC'] = @(0, 0) }
     }
+    foreach ($rawcode in @('A0N1', 'A0N2', 'A0N3', 'A0N4')) {
+        if (-not $AbilityTable.Sections.Contains($rawcode)) { throw "后羿技能物编缺失：$rawcode" }
+    }
+    $AbilityTable.Sections['A0N1']['_parent'] = 'AOsh'
+    $AbilityTable.Sections['A0N1']['DataA'] = @(0, 0, 0)
+    $AbilityTable.Sections['A0N2']['_parent'] = 'ANcl'
+    foreach ($field in @('DataA', 'DataD', 'DataE')) { $AbilityTable.Sections['A0N2'][$field] = @(0, 0, 0) }
+    $AbilityTable.Sections['A0N2']['DataF'] = @('deathcoil', 'deathcoil', 'deathcoil')
+    $AbilityTable.Sections['A0N2']['Order'] = 'deathcoil'
+    $AbilityTable.Sections['A0N3']['_parent'] = 'AOcr'
+    foreach ($field in @('DataA', 'DataB', 'DataC')) { $AbilityTable.Sections['A0N3'][$field] = @(0, 0, 0) }
+    $AbilityTable.Sections['A0N4']['_parent'] = 'ANcl'
+    foreach ($field in @('DataA', 'DataD', 'DataE')) { $AbilityTable.Sections['A0N4'][$field] = @(0, 0, 0) }
+    $AbilityTable.Sections['A0N4']['DataF'] = @('carrionswarm', 'carrionswarm', 'carrionswarm')
+    $AbilityTable.Sections['A0N4']['Order'] = 'carrionswarm'
     foreach ($rawcode in @('A0E3', 'A0E4')) {
         if (-not $AbilityTable.Sections.Contains($rawcode)) { throw "阿尔萨斯技能物编缺失：$rawcode" }
     }
@@ -1661,6 +1676,28 @@ function Apply-RoguelikeObjectOverrides {
         Order = 'roar'
         Art = 'ui\selectHero\skills\a0e4.blp'
     }
+    $AbilityTable.Sections['R0H1'] = [ordered]@{
+        _parent = 'ACcr'
+        Name = '日灼迟滞'
+        Tip = '日灼迟滞'
+        Ubertip = '金乌灼痕爆发造成的短暂减速。'
+        hero = 0
+        item = 0
+        levels = 1
+        Cool = @(0)
+        Cost = @(0)
+        Rng = @(99999)
+        Area = @(0)
+        DataA = @(0)
+        DataB = @(0)
+        DataC = @(20)
+        DataD = @(0)
+        DataE = @(0)
+        BuffID = @('B0N1')
+        Dur = @(1)
+        HeroDur = @(1)
+        Order = 'cripple'
+    }
 
     $UnitTable.Sections['u0W1'] = [ordered]@{
         _parent = 'ogru'
@@ -1688,6 +1725,35 @@ function Apply-RoguelikeObjectOverrides {
         goldRep = 0
         points = 0
         dropItems = 0
+    }
+    $UnitTable.Sections['u0H1'] = [ordered]@{
+        _parent = 'hfoo'
+        Name = '日灼施法马甲'
+        Tip = '日灼施法马甲'
+        Ubertip = '后羿金乌灼痕使用的隐藏减速施法单位。'
+        HP = 1
+        mana0 = 1000
+        manaN = 1000
+        def = 0
+        spd = 0
+        collision = 0
+        goldcost = 0
+        lumbercost = 0
+        abilList = 'Aloc,R0H1'
+        cool1 = 1
+        rangeN1 = 0
+        weapsOn = 0
+        dice1 = 0
+        sides1 = 0
+        dmgplus1 = 0
+        bountydice = 0
+        bountysides = 0
+        bountyplus = 0
+        goldRep = 0
+        points = 0
+        dropItems = 0
+        hideHeroBar = 1
+        modelScale = 0.01
     }
 }
 
@@ -1735,6 +1801,9 @@ function Apply-SkillFormulaTooltips {
             }
             if ($null -ne $attributeKey) {
                 $formula = Format-SkillDamageLines ([string]$runtime[$attributeKey]) @($runtime[$multiplierKey]) $prefix
+                if ($hero -eq 'H0N0' -and $skill -eq 'A0N4' -and $runtime.Contains('finalDamageMultiplierTenth')) {
+                    $formula += '|n第九箭：' + (Format-SkillDamageLines ([string]$runtime[$attributeKey]) @($runtime['finalDamageMultiplierTenth']) '中心坠日伤害')
+                }
             } elseif ($runtime.Contains('summonDamageAttribute') -and $runtime.Contains('summonDamageMultiplierTenth')) {
                 $formula = "猴兵每次攻击造成 $(Format-TenthMultiplier ([int]$runtime['summonDamageMultiplierTenth']))×$(Get-DamageAttributeLabel ([string]$runtime['summonDamageAttribute']))的物理伤害。"
             } elseif ($runtime.Contains('summonDamageAttribute') -and $runtime.Contains('summonDamageMultiplierHundredth')) {
@@ -1852,6 +1921,11 @@ function New-RoguelikeConfig {
             throw "阿尔萨斯每个技能必须恰有两个肉鸽效果：$skill"
         }
     }
+    foreach ($skill in @('A0N1', 'A0N2', 'A0N3', 'A0N4')) {
+        if ([int]$skillCounts["H0N0`:$skill"] -ne 2) {
+            throw "后羿每个技能必须恰有两个肉鸽效果：$skill"
+        }
+    }
     if ($commonIds.Count -ne 8) { throw "首版通用肉鸽必须恰有 8 个，实际=$($commonIds.Count)" }
 
     $skillRuntime = [ordered]@{}
@@ -1882,7 +1956,8 @@ function New-RoguelikeConfig {
         @{ hero = 'H0W0'; skill = 'A0W1'; prefix = '' }, @{ hero = 'H0W0'; skill = 'A0W2'; prefix = '' },
         @{ hero = 'H0W0'; skill = 'A0W3'; prefix = 'proc' }, @{ hero = 'H0W0'; skill = 'A0W4'; prefix = 'summon' },
         @{ hero = 'H0N0'; skill = 'A0N1'; prefix = '' }, @{ hero = 'H0N0'; skill = 'A0N2'; prefix = '' },
-        @{ hero = 'H0N0'; skill = 'A0N4'; prefix = 'proc' }, @{ hero = 'H0B0'; skill = 'A0B1'; prefix = '' },
+        @{ hero = 'H0N0'; skill = 'A0N3'; prefix = 'proc' }, @{ hero = 'H0N0'; skill = 'A0N4'; prefix = '' },
+        @{ hero = 'H0B0'; skill = 'A0B1'; prefix = '' },
         @{ hero = 'H0B0'; skill = 'A0B4'; prefix = 'proc' }, @{ hero = 'H0E0'; skill = 'A0E1'; prefix = '' },
         @{ hero = 'H0E0'; skill = 'A0E2'; prefix = '' }, @{ hero = 'H0E0'; skill = 'A0E3'; prefix = 'proc' },
         @{ hero = 'H0E0'; skill = 'A0E4'; prefix = 'summon'; multiplierKey = 'summonDamageMultiplierHundredth'; multiplierScale = 100 }
@@ -1937,6 +2012,31 @@ function New-RoguelikeConfig {
         foreach ($multiplier in @($multipliers)) {
             if ([int]$multiplier -le 0) { throw "技能伤害倍率必须为正整数十倍定点：$hero/$skill" }
         }
+    }
+    $houyiRuntime = $skillRuntime['H0N0']
+    foreach ($requirement in @(
+        @{ skill = 'A0N1'; keys = @('range', 'width', 'targetCount') },
+        @{ skill = 'A0N2'; keys = @('range', 'projectileCount', 'projectileIntervalHundredths', 'bounceRange', 'bounceCount') },
+        @{ skill = 'A0N3'; keys = @('maxStacks', 'duration', 'procArea', 'slowPercent', 'slowDurationHundredths', 'itemProcDamagePercent', 'itemProcAreaAdd') },
+        @{ skill = 'A0N4'; keys = @('finalDamageMultiplierTenth', 'area', 'outerRadius', 'projectileCount', 'normalArea', 'finalArea', 'durationHundredths') }
+    )) {
+        if ($null -eq $houyiRuntime -or -not $houyiRuntime.Contains($requirement.skill)) {
+            throw "后羿技能运行时配置缺失：H0N0/$($requirement.skill)"
+        }
+        foreach ($key in $requirement.keys) {
+            if (-not $houyiRuntime[$requirement.skill].Contains($key)) {
+                throw "后羿技能运行时字段缺失：H0N0/$($requirement.skill)/$key"
+            }
+        }
+    }
+    $houyiFinalMultipliers = $houyiRuntime['A0N4']['finalDamageMultiplierTenth']
+    $houyiFinalCount = @($houyiFinalMultipliers).Count
+    $houyiLevelCount = [int]$Abilities['A0N4']['levels']
+    if ($houyiFinalMultipliers -isnot [System.Collections.IEnumerable] -or $houyiFinalCount -ne $houyiLevelCount) {
+        throw '后羿第九箭伤害倍率等级数无效：H0N0/A0N4'
+    }
+    foreach ($multiplier in @($houyiFinalMultipliers)) {
+        if ([int]$multiplier -le 0) { throw '后羿第九箭伤害倍率必须为正整数十倍定点：H0N0/A0N4' }
     }
     foreach ($hero in @($skillIdsByHero.Keys)) { $skillIdsByHero[$hero] = $skillIdsByHero[$hero].ToArray() }
 
