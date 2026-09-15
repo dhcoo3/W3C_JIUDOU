@@ -5,6 +5,7 @@ local config = require "rogue.config"
 local state_store = require "rogue.state"
 local skill_damage = require "combat.skill_damage"
 local damage_service = require "combat.damage"
+local events = JiuDou.core and JiuDou.core.events
 
 local module = {}
 local started = false
@@ -420,11 +421,16 @@ function module.start(hero_results)
             state_for(result.unit)
         end
     end
-    damage_service.subscribe(function(report)
+    local on_damage_report = function(report)
         if report.kind == "native" and report.isBasicAttack and heroes[report.source] then
             add_day_mark(report.source, report.target, nil)
         end
-    end)
+    end
+    if events ~= nil and type(events.on) == "function" then
+        events.on("combat.damage", on_damage_report, 0)
+    else
+        damage_service.subscribe(on_damage_report)
+    end
     register_events()
     mark_timer = jass.CreateTimer()
     if mark_timer ~= nil then jass.TimerStart(mark_timer, 0.05, true, cleanup_dead_or_expired_marks) end

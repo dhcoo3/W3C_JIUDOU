@@ -7,6 +7,8 @@
 --- 点生命。补偿使用 SetUnitState，不会再次触发 EVENT_UNIT_DAMAGED。
 local jass = require "jass.common"
 local hero_stats = require "hero.stats"
+local events = JiuDou.core and JiuDou.core.events
+local modifiers = JiuDou.core and JiuDou.core.modifier
 
 local module = {}
 
@@ -44,6 +46,9 @@ local function is_alive(target)
 end
 
 local function emit(report)
+    if events ~= nil and type(events.emit) == "function" then
+        events.emit("combat.damage", report)
+    end
     for _, subscriber in ipairs(subscribers) do
         pcall(subscriber, report)
     end
@@ -251,6 +256,26 @@ function module.deal(source, target, amount, damage_type)
     if source == nil or target == nil or amount <= 0 or type(jass.UnitDamageTarget) ~= "function" then
         return false
     end
+
+    local context = {
+        source = source,
+        target = target,
+        amount = amount,
+        damageType = damage_type or jass.DAMAGE_TYPE_MAGIC,
+        kind = "synthetic",
+        cancelled = false,
+    }
+    if modifiers ~= nil and type(modifiers.apply) == "function" then
+        local allowed = modifiers.apply("damage.before", context)
+        if not allowed or context.cancelled then
+            return false
+        end
+    end
+    amount = math.max(0, math.floor(tonumber(context.amount) or 0))
+    if amount <= 0 then
+        return false
+    end
+
     local key = attack_key(source, target)
     local target_id = handle_id(target)
     if key ~= nil and target_id ~= nil and registered_targets[target_id] then
@@ -264,12 +289,23 @@ function module.deal(source, target, amount, damage_type)
             true,
             false,
             jass.ATTACK_TYPE_HERO,
-            damage_type or jass.DAMAGE_TYPE_MAGIC,
+            context.damageType,
             jass.WEAPON_TYPE_WHOKNOWS
         )
     end)
     if not ok and key ~= nil then pending_non_basic_damage[key] = nil end
     return ok
+end
+
+--- Register a priority modifier for skill/trigger damage before it reaches Warcraft.
+---@param callback fun(context:table):boolean|nil
+---@param priority integer|nil
+---@return table|nil token
+function module.register_modifier(callback, priority)
+    if modifiers == nil or type(modifiers.on) ~= "function" then
+        return nil
+    end
+    return modifiers.on("damage.before", callback, priority)
 end
 
 function module.is_started() return started end

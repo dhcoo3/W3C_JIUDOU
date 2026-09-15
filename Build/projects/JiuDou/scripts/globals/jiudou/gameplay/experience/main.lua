@@ -8,6 +8,7 @@ local formula = require "experience.formula"
 local sync = require "experience.sync"
 local damage_service = require "combat.damage"
 local hero_stats = require "hero.stats"
+local events = JiuDou.core and JiuDou.core.events
 
 local module = {}
 
@@ -402,7 +403,11 @@ function module.start(selection, hero_results)
         nil
     )
     jass.TriggerAddAction(death_trigger, on_unit_death)
-    damage_service.subscribe(on_damage_report)
+    if events ~= nil and type(events.on) == "function" then
+        events.on("combat.damage", on_damage_report, 0)
+    else
+        damage_service.subscribe(on_damage_report)
+    end
     started = true
     print(string.format("经验系统已启动：英雄等级=%d，经验读取 unit.xlsx 最终变体，模式=%d，难度=%d，玩家=%d", max_level(), difficulty_mode_id, difficulty_level, #hero_results))
     return true

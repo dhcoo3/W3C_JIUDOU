@@ -4,6 +4,7 @@
 local jass = require "jass.common"
 local frame = require "platform.frame"
 local hero_stats = require "hero.stats"
+local events = JiuDou.core and JiuDou.core.events
 
 local module = {}
 
@@ -369,14 +370,23 @@ function module.start(hero_results)
     end
 
     started = true
-    hero_stats.subscribe(function(hero)
+    local on_stats_changed = function(hero)
         if hero == active_hero then
             update_text()
             if fallback_visible then
                 show_fallback()
             end
         end
-    end)
+    end
+    if events ~= nil and type(events.on) == "function" then
+        events.on("hero.stats_changed", function(data)
+            if data ~= nil then
+                on_stats_changed(data.hero)
+            end
+        end, 0)
+    else
+        hero_stats.subscribe(on_stats_changed)
+    end
     install_hooks()
     -- 原生属性子控件可能在英雄面板首次刷新后才出现，成功绑定整体容器后仍保留短时重试。
     schedule_install()

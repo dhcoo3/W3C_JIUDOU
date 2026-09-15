@@ -3,6 +3,7 @@
 --- 普攻及普攻加成沿用原有黄橙色；技能、触发、召唤物和装备自动技能伤害使用蓝色。
 local jass = require "jass.common"
 local damage_service = require "combat.damage"
+local events = JiuDou.core and JiuDou.core.events
 
 local module = {}
 
@@ -302,7 +303,11 @@ function module.start(hero_results)
         print("伤害飘字未启动：对象池或受伤事件创建失败")
         return false
     end
-    damage_service.subscribe(on_damage_report)
+    if events ~= nil and type(events.on) == "function" then
+        events.on("combat.damage", on_damage_report, 0)
+    else
+        damage_service.subscribe(on_damage_report)
+    end
 
     update_timer = jass.CreateTimer()
     if update_timer == nil then

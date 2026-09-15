@@ -1,9 +1,6 @@
 --- 阿尔萨斯技能运行时：死亡缠绕、凛风冲击、霜之哀伤与亡灵大军。
 --- 伤害、控制、召唤与特效分开结算；跨玩家的游戏状态不放入本地 UI 分支。
 local jass = require "jass.common"
-JiuDou = JiuDou or {}
-JiuDou.runtime = JiuDou.runtime or {}
-local japi = JiuDou.runtime.japi or {}
 
 local config = require "rogue.config"
 local state_store = require "rogue.state"
@@ -11,6 +8,7 @@ local skill_damage = require "combat.skill_damage"
 local damage_service = require "combat.damage"
 local recovery = require "combat.recovery"
 local frame = require "platform.frame"
+local effect = require "platform.effect"
 
 local module = {}
 local started = false
@@ -318,7 +316,7 @@ local function move_orb_through_targets(hero, targets)
     local start_x, start_y = jass.GetUnitX(hero), jass.GetUnitY(hero)
     local orb = jass.AddSpecialEffect(SOUL_ORB_MODEL, start_x, start_y)
     if orb == nil or type(jass.CreateTimer) ~= "function" or type(jass.TimerStart) ~= "function"
-        or type(japi.DzSetEffectPos) ~= "function" then
+        or not effect.is_available() then
         for _, target in ipairs(targets) do add_effect_at(SOUL_IMPACT_MODEL, jass.GetUnitX(target), jass.GetUnitY(target)) end
         if orb ~= nil then destroy_effect(orb) end
         return
@@ -331,7 +329,7 @@ local function move_orb_through_targets(hero, targets)
     local progress = 0
     local duration = math.max(0.08, math.sqrt(distance_squared(origin_x, origin_y, target_x, target_y)) / 1500)
     local function set_position(x, y)
-        pcall(japi.DzSetEffectPos, orb, x, y, terrain_height(x, y))
+        effect.set_position(orb, x, y, terrain_height(x, y))
     end
     set_position(origin_x, origin_y)
     jass.TimerStart(timer, 0.025, true, function()

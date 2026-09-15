@@ -2,12 +2,14 @@
 --- 所有 DzFrame 与按键操作仅影响本地显示，不得修改同步游戏状态。
 local jass = require "jass.common"
 local frame = require "platform.frame"
+local input = require "platform.input"
 local hero_stats = require "hero.stats"
 local rogue_state = require "rogue.state"
 local gold = require "gold.main"
 local experience = require "experience.main"
 local special_spawn = require "monster.special_spawn"
 local attribute_config = require "config.attributes"
+local events = JiuDou.core and JiuDou.core.events
 
 local module = {}
 
@@ -257,24 +259,13 @@ local function create_panel()
 end
 
 local function register_tab_hotkey()
-    local japi = (JiuDou.runtime and JiuDou.runtime.japi) or {}
-    if type(japi) ~= "table" or type(jass.CreateTrigger) ~= "function" then
+    if type(jass.CreateTrigger) ~= "function" or not input.is_available() then
         print("属性面板快捷键未注册：当前运行时没有 JAPI")
         return false
     end
     hotkey_trigger = jass.CreateTrigger()
     local callback = function() module.toggle() end
-    local registered = false
-    if type(japi.DzTriggerRegisterKeyEventByCode) == "function" then
-        registered = pcall(function()
-            japi.DzTriggerRegisterKeyEventByCode(hotkey_trigger, TAB_KEY, KEY_DOWN, false, callback)
-        end)
-    elseif type(japi.DzTriggerRegisterKeyEvent) == "function" then
-        _G.JiuDouHeroAttributesHotkey = callback
-        registered = pcall(function()
-            japi.DzTriggerRegisterKeyEvent(hotkey_trigger, TAB_KEY, KEY_DOWN, false, "JiuDouHeroAttributesHotkey")
-        end)
-    end
+    local registered = input.register_key(hotkey_trigger, TAB_KEY, callback, "JiuDouHeroAttributesHotkey")
     if not registered then
         print("属性面板快捷键注册失败：TAB 的 DzTriggerRegisterKeyEvent 接口不可用，可点击左上角属性按钮")
         return false
@@ -298,9 +289,18 @@ function module.start(hero_results)
     end
     if active_hero == nil then return false end
     started = true
-    hero_stats.subscribe(function(hero, snapshot)
+    local on_stats_changed = function(hero, snapshot)
         if hero == active_hero then refresh_panel(snapshot) end
-    end)
+    end
+    if events ~= nil and type(events.on) == "function" then
+        events.on("hero.stats_changed", function(data)
+            if data ~= nil then
+                on_stats_changed(data.hero, data.snapshot)
+            end
+        end, 0)
+    else
+        hero_stats.subscribe(on_stats_changed)
+    end
     gold.subscribe_gold_bonus(function(player_id)
         if player_id == local_player_id() then refresh_panel() end
     end)

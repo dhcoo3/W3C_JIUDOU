@@ -19,6 +19,9 @@ local attribute_tooltip = require "hero.ui.attribute_tooltip"
 
 local M = {}
 local SYNC_PREFIX = "JiuDouMode"
+local procedure = JiuDou.core and JiuDou.core.procedure
+local events = JiuDou.core and JiuDou.core.events
+local timer_service = JiuDou.core and JiuDou.core.timer
 
 local started = false
 local startup_scheduled = false
@@ -28,6 +31,28 @@ local selection_applied = false
 local pve_startup_timer = nil
 local pve_startup_tasks = nil
 local pve_startup_index = 1
+local active_selection = nil
+local active_hero_results = nil
+local active_monster_seed = nil
+
+local function change_phase(name, data)
+    if procedure == nil or type(procedure.change) ~= "function" then
+        return true
+    end
+    local ok, message = procedure.change(name, data)
+    if not ok then
+        print("流程阶段切换失败：" .. tostring(name) .. "：" .. tostring(message))
+        return false
+    end
+    return true
+end
+
+local function current_scope()
+    if procedure ~= nil and type(procedure.scope) == "function" then
+        return procedure.scope()
+    end
+    return nil
+end
 
 local function show_local_status(message)
     print(message)
@@ -43,14 +68,34 @@ local function finish_pve_startup()
         elapsed = math.max(0, tonumber(jass.TimerGetElapsed(pve_startup_timer)) or 0)
     end
     if pve_startup_timer ~= nil then
-        jass.PauseTimer(pve_startup_timer)
-        jass.DestroyTimer(pve_startup_timer)
+        if timer_service ~= nil and type(timer_service.cancel) == "function" then
+            local scope = current_scope()
+            if scope ~= nil and type(scope.detach) == "function" then
+                scope:detach(pve_startup_timer)
+            end
+            timer_service.cancel(pve_startup_timer)
+        else
+            jass.PauseTimer(pve_startup_timer)
+            jass.DestroyTimer(pve_startup_timer)
+        end
         pve_startup_timer = nil
     end
     print(string.format("PVE 分帧初始化完成：步骤=%d，耗时=%.2f 秒", #(pve_startup_tasks or {}), elapsed))
     pve_startup_tasks = nil
     pve_startup_index = 1
     show_local_status("游戏准备完成")
+    change_phase("running", {
+        selection = active_selection,
+        hero_results = active_hero_results,
+        monster_seed = active_monster_seed,
+    })
+    if events ~= nil then
+        events.emit("game.running", {
+            selection = active_selection,
+            hero_results = active_hero_results,
+            monster_seed = active_monster_seed,
+        })
+    end
 end
 
 local function start_pve_staged(selection, hero_results, monster_seed)
@@ -135,10 +180,15 @@ local function start_pve_staged(selection, hero_results, monster_seed)
         end
     end
 
-    if type(jass.CreateTimer) == "function" and type(jass.TimerStart) == "function" then
+    if timer_service ~= nil and type(timer_service.every) == "function" then
+        pve_startup_timer = timer_service.every(0.03, step, current_scope())
+    end
+    if pve_startup_timer == nil
+        and type(jass.CreateTimer) == "function"
+        and type(jass.TimerStart) == "function" then
         pve_startup_timer = jass.CreateTimer()
         jass.TimerStart(pve_startup_timer, 0.03, true, step)
-    else
+    elseif pve_startup_timer == nil then
         while pve_startup_tasks ~= nil do step() end
     end
 end
@@ -146,6 +196,9 @@ end
 local function start_game_mode(selection, hero_results, monster_seed)
     if started then return end
     started = true
+    active_selection = selection
+    active_hero_results = hero_results
+    active_monster_seed = monster_seed
     print(string.format(
         "游戏模式已确定：category=%s, mode=%s, level=%s",
         selection.category,
@@ -155,10 +208,23 @@ local function start_game_mode(selection, hero_results, monster_seed)
 
     if selection.category == config.CATEGORY_PVE then
         print(string.format("PVE 英雄选择完成：%d 名玩家已创建英雄", #(hero_results or {})))
+        change_phase("prepare", {
+            selection = selection,
+            hero_results = hero_results,
+            monster_seed = monster_seed,
+        })
+        if events ~= nil then
+            events.emit("hero.selection_completed", {
+                selection = selection,
+                hero_results = hero_results,
+                monster_seed = monster_seed,
+            })
+        end
         start_pve_staged(selection, hero_results, monster_seed)
         return
     end
     -- PVP initialization is intentionally unchanged until its mode is implemented.
+    change_phase("running", { selection = selection })
 end
 
 local function apply_selection(selection)
@@ -172,6 +238,10 @@ local function apply_selection(selection)
     selection_applied = true
     dialog.close()
     if selection.category == config.CATEGORY_PVE then
+        change_phase("hero_select", selection)
+        if events ~= nil then
+            events.emit("mode.selected", selection)
+        end
         show_local_status("属性系统准备中")
         if not rogue.preload(function()
             show_local_status("属性系统准备完成，进入英雄选择")
@@ -226,9 +296,7 @@ end
 function M.start()
     if started or startup_scheduled then return false end
     startup_scheduled = true
-    local startup_timer = jass.CreateTimer()
-    jass.TimerStart(startup_timer, 0.10, false, function()
-        jass.DestroyTimer(startup_timer)
+    local function start_mode_selection()
         local ok, message = pcall(function()
             sync_available = register_sync()
             --if not bottom_hud.show() then
@@ -237,7 +305,17 @@ function M.start()
             dialog.show_root(on_selection)
         end)
         if not ok then print("模式选择启动失败：" .. tostring(message)) end
-    end)
+    end
+
+    if timer_service ~= nil and type(timer_service.after) == "function" then
+        timer_service.after(0.10, start_mode_selection, current_scope())
+    else
+        local startup_timer = jass.CreateTimer()
+        jass.TimerStart(startup_timer, 0.10, false, function()
+            jass.DestroyTimer(startup_timer)
+            start_mode_selection()
+        end)
+    end
     return true
 end
 

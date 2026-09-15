@@ -1,6 +1,7 @@
 --- 第 1、2 格装备合成。
 --- 本地快捷键只发送请求；房主重新读取物品栏并广播完整合成结果。
 local jass = require "jass.common"
+local input = require "platform.input"
 local config = require "config.items"
 local instance = require "equipment.instance"
 local generator = require "equipment.generator"
@@ -297,8 +298,7 @@ function module.request_merge()
 end
 
 local function register_hotkey()
-    local japi = (JiuDou.runtime and JiuDou.runtime.japi) or {}
-    if type(japi) ~= "table" then
+    if not input.is_available() then
         print("装备合成快捷键未注册：当前运行时没有 JAPI")
         return false
     end
@@ -308,19 +308,12 @@ local function register_hotkey()
     local callback = function()
         module.request_merge()
     end
-    local registered = false
-
-    if type(japi.DzTriggerRegisterKeyEventByCode) == "function" then
-        registered = pcall(function()
-            japi.DzTriggerRegisterKeyEventByCode(key_trigger, MERGE_KEY_F2, KEY_DOWN, false, callback)
-        end)
-    elseif type(japi.DzTriggerRegisterKeyEvent) == "function" then
-        -- 兼容只有字符串回调版本的旧 JAPI；全局引用用于保证回调在游戏期间不被回收。
-        _G.JiuDouEquipmentMergeHotkey = callback
-        registered = pcall(function()
-            japi.DzTriggerRegisterKeyEvent(key_trigger, MERGE_KEY_F2, KEY_DOWN, false, "JiuDouEquipmentMergeHotkey")
-        end)
-    end
+    local registered = input.register_key(
+        key_trigger,
+        MERGE_KEY_F2,
+        callback,
+        "JiuDouEquipmentMergeHotkey"
+    )
 
     if not registered then
         print("装备合成快捷键注册失败：F2 的 DzTriggerRegisterKeyEvent 接口不可用")

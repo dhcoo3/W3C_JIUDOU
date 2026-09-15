@@ -8,6 +8,7 @@ local formula = require "gold.formula"
 local sync = require "gold.sync"
 local damage_numbers = require "combat.damage_numbers"
 local damage_service = require "combat.damage"
+local events = JiuDou.core and JiuDou.core.events
 
 local module = {}
 
@@ -347,7 +348,11 @@ function module.start(selection, hero_results)
     end
     jass.TriggerRegisterPlayerUnitEvent(death_trigger, jass.Player(NEUTRAL_HOSTILE_PLAYER_ID), jass.EVENT_PLAYER_UNIT_DEATH, nil)
     jass.TriggerAddAction(death_trigger, on_unit_death)
-    damage_service.subscribe(on_damage_report)
+    if events ~= nil and type(events.on) == "function" then
+        events.on("combat.damage", on_damage_report, 0)
+    else
+        damage_service.subscribe(on_damage_report)
+    end
     started = true
     print(string.format("金币系统已启动：奖励读取 unit.xlsx 最终变体，模式=%d，难度=%d，玩家=%d", difficulty_mode_id, difficulty_level, active_count))
     return true

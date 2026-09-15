@@ -4,6 +4,9 @@ local jass = require "jass.common"
 local equipment_config = require "config.equipment"
 local attribute_config = require "config.attributes"
 local unit_config = require "config.units"
+local events = JiuDou.core and JiuDou.core.events
+local timer_service = JiuDou.core and JiuDou.core.timer
+local resource_api = JiuDou.core and JiuDou.core.resource
 
 local module = {}
 
@@ -24,6 +27,7 @@ local sources_by_hero = {}
 local applied_states = {}
 local listeners = {}
 local preload_timer = nil
+local preload_scope = nil
 local preload_dummy = nil
 local preload_index = 1
 local preload_completed = false
@@ -350,8 +354,25 @@ local function apply_primary_attribute(hero, state, attribute_id, getter, setter
 end
 
 local function notify_listeners(hero, snapshot)
+    if events ~= nil and type(events.emit) == "function" then
+        events.emit("hero.stats_changed", {
+            hero = hero,
+            snapshot = snapshot,
+        })
+    end
     for _, listener in ipairs(listeners) do
         pcall(listener, hero, snapshot)
+    end
+end
+
+local function notify_source_changed(hero, source_id, values, removed)
+    if events ~= nil and type(events.emit) == "function" then
+        events.emit("hero.source_changed", {
+            hero = hero,
+            sourceId = source_id,
+            values = copy_values(values),
+            removed = removed == true,
+        })
     end
 end
 
@@ -360,9 +381,20 @@ local function finish_preload()
         preload_elapsed_seconds = math.max(0, jass.TimerGetElapsed(preload_timer) or 0)
     end
     if preload_timer ~= nil then
-        jass.PauseTimer(preload_timer)
-        jass.DestroyTimer(preload_timer)
+        if preload_scope ~= nil and type(preload_scope.detach) == "function" then
+            preload_scope:detach(preload_timer)
+        end
+        if timer_service ~= nil and type(timer_service.cancel) == "function" then
+            timer_service.cancel(preload_timer)
+        else
+            jass.PauseTimer(preload_timer)
+            jass.DestroyTimer(preload_timer)
+        end
         preload_timer = nil
+    end
+    if preload_scope ~= nil then
+        preload_scope:clear()
+        preload_scope = nil
     end
     if preload_dummy ~= nil and type(jass.RemoveUnit) == "function" then
         jass.RemoveUnit(preload_dummy)
@@ -412,12 +444,15 @@ function module.preload(on_completed)
     if preload_dummy == nil then return false end
     if type(jass.ShowUnit) == "function" then jass.ShowUnit(preload_dummy, false) end
     local rawcodes = get_preload_rawcodes()
-    if rawcodes == nil then return false end
+    if rawcodes == nil then
+        if type(jass.RemoveUnit) == "function" then jass.RemoveUnit(preload_dummy) end
+        preload_dummy = nil
+        return false
+    end
     preload_index = 1
     preload_total_steps = #rawcodes * 10
     preload_elapsed_seconds = 0
-    preload_timer = jass.CreateTimer()
-    jass.TimerStart(preload_timer, PRELOAD_INTERVAL_SECONDS, true, function()
+    local function on_preload_tick()
         for _ = 1, PRELOAD_OPERATIONS_PER_TICK do
             if preload_index > preload_total_steps then break end
             local rawcode_index = math.floor((preload_index - 1) / 10) + 1
@@ -431,7 +466,23 @@ function module.preload(on_completed)
             preload_index = preload_index + 1
         end
         if preload_index > preload_total_steps then finish_preload() end
-    end)
+    end
+    preload_scope = resource_api ~= nil and resource_api.scope("hero_stats_preload") or nil
+    if timer_service ~= nil and type(timer_service.every) == "function" then
+        preload_timer = timer_service.every(PRELOAD_INTERVAL_SECONDS, on_preload_tick, preload_scope)
+    else
+        preload_timer = jass.CreateTimer()
+        jass.TimerStart(preload_timer, PRELOAD_INTERVAL_SECONDS, true, on_preload_tick)
+    end
+    if preload_timer == nil then
+        if preload_scope ~= nil then
+            preload_scope:clear()
+            preload_scope = nil
+        end
+        if type(jass.RemoveUnit) == "function" then jass.RemoveUnit(preload_dummy) end
+        preload_dummy = nil
+        return false
+    end
     print(string.format("属性系统准备中：预热 %d 个等级组合", preload_total_steps))
     return true
 end
@@ -489,16 +540,26 @@ end
 function module.set_source(hero, source_id, values)
     if hero == nil or type(source_id) ~= "string" or source_id == "" then return false end
     sources_by_hero[hero] = sources_by_hero[hero] or {}
-    sources_by_hero[hero][source_id] = normalize_values(values)
-    return module.refresh(hero)
+    local normalized = normalize_values(values)
+    sources_by_hero[hero][source_id] = normalized
+    local refreshed = module.refresh(hero)
+    if refreshed then
+        notify_source_changed(hero, source_id, normalized, false)
+    end
+    return refreshed
 end
 
 ---@param hero unit
 ---@param source_id string
 ---@return boolean refreshed
 function module.clear_source(hero, source_id)
+    local had_source = sources_by_hero[hero] ~= nil and sources_by_hero[hero][source_id] ~= nil
     if sources_by_hero[hero] ~= nil then sources_by_hero[hero][source_id] = nil end
-    return module.refresh(hero)
+    local refreshed = module.refresh(hero)
+    if refreshed and had_source then
+        notify_source_changed(hero, source_id, nil, true)
+    end
+    return refreshed
 end
 
 --- 刷新所有来源并投影到 Warcraft 原生属性。

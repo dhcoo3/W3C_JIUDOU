@@ -5,6 +5,9 @@ local sync = require "platform.sync"
 local config = require "selectHero.data.config"
 local hero_pool = require "selectHero.data.hero_pool"
 local popup = require "selectHero.ui.popup"
+local random = JiuDou.core and JiuDou.core.random
+local resource_api = JiuDou.core and JiuDou.core.resource
+local timer_service = JiuDou.core and JiuDou.core.timer
 
 local module = {}
 
@@ -41,6 +44,7 @@ local HOST_PLAYER_ID = 0
 ---@field players table<integer, HeroSelectPlayerState> 玩家选将状态
 ---@field remainingSeconds integer 当前剩余秒数
 ---@field timer timer|nil 同步倒计时计时器
+---@field scope table|nil 选将阶段资源作用域
 ---@field finalSent boolean 房主是否已发送最终结果
 ---@field completed boolean 是否已完成英雄创建
 
@@ -49,11 +53,10 @@ local sync_trigger = nil
 local completion_callback = nil
 local next_session_id = 1
 local sync_available = false
-local random_seeded = false
-local random_state = 1
 local pending_mode_selection = nil
 
 local dispatch_message
+local register_sync_event
 
 local function split_text(value, separator)
     local parts = {}
@@ -114,26 +117,16 @@ local function get_sender_id()
 end
 
 local function random_integer(minimum, maximum)
+    if type(random) == "table" and type(random.int) == "function" then
+        return random.int(minimum, maximum)
+    end
     if minimum >= maximum then
         return minimum
     end
-
-    -- Warcraft 原生随机函数在 1.27/KKWE 环境中比 Lua 标准 math.random 更可靠。
     if type(jass.GetRandomInt) == "function" then
         return jass.GetRandomInt(minimum, maximum)
     end
-
-    -- 某些降级运行环境没有 GetRandomInt，使用不依赖 math.random 的兼容实现。
-    if not random_seeded then
-        local seed = 1
-        if type(os) == "table" and type(os.time) == "function" then
-            seed = os.time()
-        end
-        random_state = (math.abs(seed) % 2147483646) + 1
-        random_seeded = true
-    end
-    random_state = (random_state * 48271) % 2147483647
-    return minimum + (random_state % (maximum - minimum + 1))
+    return minimum
 end
 
 local function contains_rawcode(candidates, rawcode)
@@ -224,9 +217,37 @@ local function stop_timer(session)
         return
     end
 
-    jass.PauseTimer(session.timer)
-    jass.DestroyTimer(session.timer)
+    if timer_service ~= nil and type(timer_service.cancel) == "function" then
+        if session.scope ~= nil and type(session.scope.detach) == "function" then
+            session.scope:detach(session.timer)
+        end
+        timer_service.cancel(session.timer)
+    else
+        jass.PauseTimer(session.timer)
+        jass.DestroyTimer(session.timer)
+    end
     session.timer = nil
+end
+
+local function clear_session(session)
+    if session == nil then
+        return
+    end
+    if current_session == session and sync_trigger ~= nil then
+        if session.scope ~= nil and type(session.scope.detach) == "function" then
+            session.scope:detach(sync_trigger)
+        end
+        if type(jass.DestroyTrigger) == "function" then
+            jass.DestroyTrigger(sync_trigger)
+        end
+        sync_trigger = nil
+    end
+    stop_timer(session)
+    if session.scope ~= nil then
+        session.scope:clear()
+        session.scope = nil
+    end
+    popup.hide()
 end
 
 local function destroy_sync_trigger()
@@ -234,6 +255,11 @@ local function destroy_sync_trigger()
         return
     end
 
+    if current_session ~= nil
+        and current_session.scope ~= nil
+        and type(current_session.scope.detach) == "function" then
+        current_session.scope:detach(sync_trigger)
+    end
     jass.DestroyTrigger(sync_trigger)
     sync_trigger = nil
 end
@@ -351,8 +377,7 @@ local function show_local_popup()
 end
 
 local function start_timer(session)
-    session.timer = jass.CreateTimer()
-    jass.TimerStart(session.timer, 1.0, true, function()
+    local function on_tick()
         if current_session ~= session or session.completed then
             stop_timer(session)
             return
@@ -373,7 +398,17 @@ local function start_timer(session)
 
         local random_index = random_integer(1, #player_state.candidates)
         send_pick(local_player_id, player_state.candidates[random_index])
-    end)
+    end
+
+    if timer_service ~= nil and type(timer_service.every) == "function" then
+        session.timer = timer_service.every(1.0, on_tick, session.scope)
+        if session.timer ~= nil then
+            return
+        end
+    end
+
+    session.timer = jass.CreateTimer()
+    jass.TimerStart(session.timer, 1.0, true, on_tick)
 end
 
 local function encode_init(session_id, player_ids)
@@ -468,8 +503,7 @@ local function apply_init(message, sender_id)
         if current_session.id > parsed.id then
             return
         end
-        stop_timer(current_session)
-        popup.hide()
+        clear_session(current_session)
     end
 
     if completion_callback == nil then
@@ -484,9 +518,23 @@ local function apply_init(message, sender_id)
         players = parsed.players,
         remainingSeconds = config.SETTINGS.durationSeconds,
         timer = nil,
+        scope = resource_api ~= nil and resource_api.scope("hero_select:" .. tostring(parsed.id)) or nil,
         finalSent = false,
         completed = false,
     }
+    -- 新会话可能是在旧会话被替换后创建的；旧会话清理时会销毁同步触发器，
+    -- 因此这里要确保新会话重新注册，避免选将流程看似启动但再也收不到同步消息。
+    if sync_available and sync_trigger == nil then
+        if not register_sync_event() then
+            sync_available = false
+            print("选将会话启动：同步触发器重新注册失败")
+        end
+    end
+    if current_session.scope ~= nil
+        and resource_api ~= nil
+        and type(resource_api.trigger) == "function" then
+        resource_api.trigger(current_session.scope, sync_trigger)
+    end
     print(string.format("选将会话已启动：session=%d，玩家数=%d", parsed.id, #parsed.playerIds))
     start_timer(current_session)
     show_local_popup()
@@ -735,6 +783,11 @@ local function apply_final(message, sender_id)
 
     print(string.format("选将完成：session=%d，已创建 %d 名英雄", current_session.id, #selection_results))
     destroy_sync_trigger()
+    local completed_scope = current_session.scope
+    current_session.scope = nil
+    if completed_scope ~= nil then
+        completed_scope:clear()
+    end
     if completion_callback ~= nil then
         completion_callback(current_session.modeSelection, selection_results, monster_seed)
     end
@@ -836,7 +889,7 @@ dispatch_message = function(message, sender_id)
     end
 end
 
-local function register_sync_event()
+register_sync_event = function()
     sync_trigger = jass.CreateTrigger()
     jass.TriggerAddAction(sync_trigger, function()
         local message = sync.get_sync_data()

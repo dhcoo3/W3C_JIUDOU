@@ -21,6 +21,9 @@ Build/tools/go-cache/
 Build/tools/go1.24.1/
 Build/tools/go1.24.1.windows-amd64*.zip
 
+# 配置生成器在异常中断时保留的恢复暂存目录
+Build/projects/JiuDou/scripts/globals/config/.generate-staging-*/
+
 # Excel 临时锁定文件
 ~$*.xlsx
 ~$*.xls
