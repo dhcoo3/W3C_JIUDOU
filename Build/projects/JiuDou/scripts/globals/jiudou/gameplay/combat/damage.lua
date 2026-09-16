@@ -5,10 +5,13 @@
 --- Warcraft III 1.27 没有 BlzSetEventDamage。普通攻击加成因此采用受伤事件后的
 --- 生命值补偿：原生攻击先完成护甲结算，本服务再直接扣除 floor(已结算伤害×普攻加成/100)
 --- 点生命。补偿使用 SetUnitState，不会再次触发 EVENT_UNIT_DAMAGED。
-local jass = require "jass.common"
-local hero_stats = require "hero.stats"
+local jass = J.Common
+local hero_stats = JiuDou.module("gameplay.hero.stats")
 local events = JiuDou.core and JiuDou.core.events
 local modifiers = JiuDou.core and JiuDou.core.modifier
+local lifecycle = JiuDou.core and JiuDou.core.lifecycle
+local resource_api = JiuDou.core and JiuDou.core.resource
+local timer_service = JiuDou.core and JiuDou.core.timer
 
 local module = {}
 
@@ -24,6 +27,7 @@ local registered_targets = {}
 local pending_attacks = {}
 local pending_non_basic_damage = {}
 local applying_compensation = {}
+local runtime_scope = nil
 
 local ATTACK_MARK_DURATION = 0.90
 
@@ -152,7 +156,7 @@ local function on_unit_damaged()
     end
 end
 
-local function register_damage_trigger()
+local function register_damage_trigger(scope)
     if type(jass.CreateTrigger) ~= "function"
         or type(jass.TriggerAddAction) ~= "function"
         or type(jass.TriggerRegisterUnitEvent) ~= "function"
@@ -161,11 +165,12 @@ local function register_damage_trigger()
     end
     damage_trigger = jass.CreateTrigger()
     if damage_trigger == nil then return false end
+    if scope ~= nil then resource_api.trigger(scope, damage_trigger) end
     jass.TriggerAddAction(damage_trigger, on_unit_damaged)
     return true
 end
 
-local function register_attack_trigger()
+local function register_attack_trigger(scope)
     if type(jass.TriggerRegisterPlayerUnitEvent) ~= "function"
         or type(jass.TriggerAddAction) ~= "function"
         or jass.EVENT_PLAYER_UNIT_ATTACKED == nil
@@ -174,6 +179,7 @@ local function register_attack_trigger()
     end
     attack_trigger = jass.CreateTrigger()
     if attack_trigger == nil then return false end
+    if scope ~= nil then resource_api.trigger(scope, attack_trigger) end
     for player_id = 0, 15 do
         jass.TriggerRegisterPlayerUnitEvent(
             attack_trigger,
@@ -195,7 +201,15 @@ end
 ---@return boolean started_now
 function module.start(hero_results)
     if started then return true end
-    if not register_damage_trigger() or not register_attack_trigger() then
+    runtime_scope = lifecycle and lifecycle.acquire("combat.damage", function()
+        started = false
+        damage_trigger, attack_trigger, cleanup_timer = nil, nil, nil
+        subscribers, hero_sources, registered_targets = {}, {}, {}
+        pending_attacks, pending_non_basic_damage, applying_compensation = {}, {}, {}
+        event_clock = 0.0
+    end) or nil
+    if not register_damage_trigger(runtime_scope) or not register_attack_trigger(runtime_scope) then
+        if lifecycle ~= nil then lifecycle.release("combat.damage") end
         if not warned_unavailable then
             warned_unavailable = true
             print("统一伤害事件未启动：当前运行时缺少 1.27 单位受伤或攻击事件接口")
@@ -209,11 +223,13 @@ function module.start(hero_results)
         end
     end
     started = true
-    if type(jass.CreateTimer) == "function" and type(jass.TimerStart) == "function" then
-        cleanup_timer = jass.CreateTimer()
-        if cleanup_timer ~= nil then jass.TimerStart(cleanup_timer, 0.10, true, cleanup_attack_marks) end
-    end
+    if timer_service ~= nil then cleanup_timer = timer_service.every(0.10, cleanup_attack_marks, runtime_scope) end
     return true
+end
+
+function module.stop()
+    if lifecycle ~= nil and lifecycle.release("combat.damage") then return true end
+    return false
 end
 
 ---@param target unit
@@ -310,4 +326,5 @@ end
 
 function module.is_started() return started end
 
+JiuDou.publish("gameplay.combat.damage", module)
 return module

@@ -1,10 +1,11 @@
 --- PVE 随机选将业务入口。
 --- 负责多人同步会话、候选刷新、最终英雄创建，并把本地界面操作转化为可校验的同步请求。
-local jass = require "jass.common"
-local sync = require "platform.sync"
-local config = require "selectHero.data.config"
-local hero_pool = require "selectHero.data.hero_pool"
-local popup = require "selectHero.ui.popup"
+local jass = J.Common
+local sync = JiuDou.module("platform.sync")
+local config = JiuDou.module("gameplay.selectHero.data.config")
+local hero_pool = JiuDou.module("gameplay.selectHero.data.hero_pool")
+local ability_catalog = JiuDou.module("gameplay.selectHero.data.ability_catalog")
+local ui = UIKit("jiudou_select_hero")
 local random = JiuDou.core and JiuDou.core.random
 local resource_api = JiuDou.core and JiuDou.core.resource
 local timer_service = JiuDou.core and JiuDou.core.timer
@@ -247,7 +248,7 @@ local function clear_session(session)
         session.scope:clear()
         session.scope = nil
     end
-    popup.hide()
+    ui:hide()
 end
 
 local function destroy_sync_trigger()
@@ -308,6 +309,63 @@ local function send_refresh_request(player_id)
     end
 end
 
+local function color_text(color, value)
+    return string.format("|cff%s%s|r", color, tostring(value or ""))
+end
+
+local function format_ability_detail(ability)
+    return string.format(
+        "%s  |cffB8C2BC伤害 %s · 范围 %s · 冷却 %s|r|n%s",
+        color_text("F3E4BE", ability.name),
+        ability.damage,
+        ability.range,
+        ability.cooldown,
+        color_text("B8C2BC", ability.description)
+    )
+end
+
+local function image_path(folder, rawcode)
+    return japi.AssetsImage("selectHero/" .. folder .. "/" .. string.lower(rawcode))
+end
+
+local function find_candidate_slot(rawcodes, rawcode)
+    for slot, candidate_rawcode in ipairs(rawcodes or {}) do
+        if candidate_rawcode == rawcode then
+            return slot
+        end
+    end
+    return nil
+end
+
+local function set_local_popup_content(candidates, player_state)
+    ui:set_title("随机英雄选择")
+    ui:set_subtitle("从随机的 3 位英雄中选择 1 位")
+    ui:set_skill_detail("点击技能图标查看伤害、范围、冷却和说明。")
+    ui:set_remaining_seconds(string.format("%d 秒", current_session.remainingSeconds))
+    ui:set_refresh_text(string.format("刷新（%d）", math.max(player_state.refreshRemaining, 0)))
+    ui:set_confirm_text("请选择英雄")
+
+    for slot, hero in ipairs(candidates) do
+        ui:set_card_name(slot, hero.name)
+        ui:set_card_attribute(slot, "力量", hero.strength, string.format("+%d/级", hero.strengthGrowth))
+        ui:set_card_attribute(slot, "敏捷", hero.agility, string.format("+%d/级", hero.agilityGrowth))
+        ui:set_card_attribute(slot, "智力", hero.intelligence, string.format("+%d/级", hero.intelligenceGrowth))
+        ui:set_card_portrait(slot, image_path("portraits", hero.rawcode))
+
+        for skill_index, ability_rawcode in ipairs(hero.abilities) do
+            local ability = ability_catalog.get(ability_rawcode)
+            if ability ~= nil then
+                ui:set_skill_name(slot, skill_index, ability.name)
+                ui:set_skill_icon(slot, skill_index, image_path("skills", ability_rawcode))
+            end
+        end
+    end
+
+    ui:set_selected(find_candidate_slot(player_state.candidates, player_state.preselectedRawcode))
+    ui:set_refresh_enabled(player_state.refreshRemaining > 0)
+    ui:set_confirm_enabled(player_state.preselectedRawcode ~= nil)
+end
+
 local function show_local_popup()
     if current_session == nil or current_session.completed then
         return
@@ -320,12 +378,8 @@ local function show_local_popup()
     end
 
     local candidates = build_local_candidate_definitions(player_state)
-    local shown = popup.show({
-        sessionId = current_session.id,
-        candidates = candidates,
-        remainingSeconds = current_session.remainingSeconds,
-        refreshRemaining = player_state.refreshRemaining,
-        onHeroSelected = function(rawcode)
+    local shown = ui:show({
+        onHeroSelected = function(slot)
             if current_session == nil or current_session.completed then
                 return
             end
@@ -335,11 +389,27 @@ local function show_local_popup()
                 return
             end
 
+            local rawcode = current_state.candidates[slot]
+            if rawcode == nil then
+                return
+            end
             current_state.preselectedRawcode = rawcode
-            popup.set_selected(rawcode)
+            ui:set_selected(slot)
+            ui:set_confirm_enabled(true)
         end,
-        onSkillSelected = function(rawcode)
-            popup.show_ability_detail(rawcode)
+        onSkillSelected = function(slot, skill_index)
+            if current_session == nil or current_session.completed then
+                return
+            end
+
+            local current_state = current_session.players[local_player_id]
+            local rawcode = current_state and current_state.candidates[slot]
+            local hero = rawcode and hero_pool.get(rawcode)
+            local ability_rawcode = hero and hero.abilities[skill_index]
+            local ability = ability_rawcode and ability_catalog.get(ability_rawcode)
+            if ability ~= nil then
+                ui:set_skill_detail(format_ability_detail(ability))
+            end
         end,
         onRefresh = function()
             if current_session == nil or current_session.completed then
@@ -370,12 +440,11 @@ local function show_local_popup()
     })
 
     if not shown then
-        print("选将界面创建失败：" .. popup.get_last_error())
-    elseif player_state.preselectedRawcode ~= nil then
-        popup.set_selected(player_state.preselectedRawcode)
+        print("选将界面创建失败：" .. ui:get_last_error())
+    else
+        set_local_popup_content(candidates, player_state)
     end
 end
-
 local function start_timer(session)
     local function on_tick()
         if current_session ~= session or session.completed then
@@ -384,7 +453,7 @@ local function start_timer(session)
         end
 
         session.remainingSeconds = session.remainingSeconds - 1
-        popup.set_remaining_seconds(session.remainingSeconds)
+        ui:set_remaining_seconds(string.format("%d 秒", session.remainingSeconds))
         if session.remainingSeconds > 0 then
             return
         end
@@ -758,7 +827,7 @@ local function apply_final(message, sender_id)
 
     current_session.completed = true
     stop_timer(current_session)
-    popup.hide()
+    ui:hide()
 
     local selection_results = {}
     for _, player_id in ipairs(current_session.playerIds) do
@@ -832,7 +901,7 @@ local function apply_pick(message_parts, sender_id)
     player_state.submittedRawcode = rawcode
     player_state.preselectedRawcode = nil
     if get_local_player_id() == player_id then
-        popup.hide()
+        ui:hide()
     end
     maybe_send_final()
 end
@@ -867,7 +936,8 @@ local function apply_grant(message, sender_id)
 
     player_state.refreshRemaining = remaining
     if get_local_player_id() == player_id then
-        popup.set_refresh_remaining(remaining)
+        ui:set_refresh_text(string.format("刷新（%d）", math.max(remaining, 0)))
+        ui:set_refresh_enabled(remaining > 0)
     end
 end
 
@@ -975,6 +1045,21 @@ function module.start(mode_selection, on_completed)
     return true
 end
 
+--- 主动终止选将流程；供流程重启或异常回滚时释放倒计时、同步 Trigger 与本地界面。
+function module.stop()
+    if current_session ~= nil then
+        clear_session(current_session)
+    else
+        destroy_sync_trigger()
+    end
+    current_session = nil
+    completion_callback = nil
+    pending_mode_selection = nil
+    sync_available = false
+    ui:hide()
+    return true
+end
+
 --- 为当前选将会话的指定玩家增加刷新次数。
 --- 该接口只允许房主在已同步的商城或玩法事件中调用。
 ---@param player player 获得刷新次数的玩家
@@ -1004,4 +1089,5 @@ function module.grant_refresh_count(player, amount)
     return true
 end
 
+JiuDou.publish("gameplay.selectHero.main", module)
 return module

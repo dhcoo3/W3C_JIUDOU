@@ -1,7 +1,7 @@
 --- 经验同步适配层。
 --- 房主广播每名玩家的经验总量和经验加成，客户端只接受房主的绝对状态。
-local jass = require "jass.common"
-local platform_sync = require "platform.sync"
+local jass = J.Common
+local platform_sync = JiuDou.module("platform.sync")
 
 local module = {}
 local PREFIX = "JiuDouExperience"
@@ -43,6 +43,12 @@ function module.start(on_message)
     return true
 end
 
+function module.stop()
+    callback = nil
+    if trigger ~= nil and type(jass.DestroyTrigger) == "function" then jass.DestroyTrigger(trigger) end
+    trigger = nil
+end
+
 function module.broadcast(message)
     if platform_sync.is_available() then
         platform_sync.send_sync_data(PREFIX, message)
@@ -68,4 +74,5 @@ function module.get_version() return VERSION end
 function module.get_prefix() return PREFIX end
 module.split = split
 
+JiuDou.publish("gameplay.experience.sync", module)
 return module

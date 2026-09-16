@@ -1,9 +1,9 @@
 --- 装备属性来源适配层。
 --- 实际属性写入由 hero.stats 聚合，避免装备与肉鸽互相覆盖。
-local hero_stats = require "hero.stats"
-local instance = require "equipment.instance"
-local passive = require "equipment.passive"
-local combo = require "equipment.combo"
+local hero_stats = JiuDou.module("gameplay.hero.stats")
+local instance = JiuDou.module("gameplay.equipment.instance")
+local passive = JiuDou.module("gameplay.equipment.passive")
+local combo = JiuDou.module("gameplay.equipment.combo")
 
 local module = {}
 
@@ -48,4 +48,5 @@ function module.remove_instance(hero, instance_data)
     return module.refresh(hero)
 end
 
+JiuDou.publish("gameplay.equipment.stats", module)
 return module

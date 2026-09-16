@@ -55,6 +55,10 @@ local function register_procedures()
     })
     procedure.register("result", {
         enter = function()
+            local lifecycle = JiuDou.core and JiuDou.core.lifecycle
+            if lifecycle ~= nil then
+                lifecycle.finish()
+            end
             if JiuDou.core.log ~= nil then
                 JiuDou.core.log.info("进入结算阶段")
             end

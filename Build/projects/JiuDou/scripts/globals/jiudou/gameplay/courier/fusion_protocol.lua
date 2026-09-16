@@ -114,4 +114,5 @@ end
 
 function module.get_version() return VERSION end
 
+JiuDou.publish("gameplay.courier.fusion_protocol", module)
 return module

@@ -1,7 +1,7 @@
 --- 技能伤害公式服务。
 --- 所有倍率使用十倍定点整数：6 表示 0.6×，10 表示 1×；不使用浮点倍率。
 --- 技能最终伤害统一叠加 floor(最终智力 / 10) 的智力技能伤害加成。
-local hero_stats = require "hero.stats"
+local hero_stats = JiuDou.module("gameplay.hero.stats")
 
 local module = {}
 
@@ -101,4 +101,5 @@ function module.attribute_label(attribute_id)
     return ATTRIBUTE_LABELS[attribute_id] or tostring(attribute_id or "主属性")
 end
 
+JiuDou.publish("gameplay.combat.skill_damage", module)
 return module

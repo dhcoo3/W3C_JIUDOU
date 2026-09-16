@@ -1,8 +1,9 @@
 --- 肉鸽局内运行时。
 --- 集中管理升级事件和强化倒计时，避免主流程持有原生 Trigger/Timer 生命周期。
-local jass = require "jass.common"
+local jass = J.Common
 local timer_service = JiuDou.core and JiuDou.core.timer
 local resource_api = JiuDou.core and JiuDou.core.resource
+local lifecycle = JiuDou.core and JiuDou.core.lifecycle
 
 local module = {}
 local Runtime = {}
@@ -20,11 +21,21 @@ local function destroy_timer(timer)
 end
 
 function module.create(name)
-    return setmetatable({
-        scope = resource_api and resource_api.scope(name or "rogue_runtime") or nil,
+    local runtime = setmetatable({
+        scope_name = tostring(name or "rogue_runtime"),
+        scope = nil,
         level_trigger = nil,
         countdown_timer = nil,
     }, Runtime)
+    if lifecycle ~= nil and lifecycle.is_active() then
+        runtime.scope = lifecycle.acquire(runtime.scope_name, function()
+            runtime.level_trigger = nil
+            runtime.countdown_timer = nil
+        end)
+    elseif resource_api then
+        runtime.scope = resource_api.scope(runtime.scope_name)
+    end
+    return runtime
 end
 
 ---@param player_ids table<integer, table>
@@ -66,6 +77,12 @@ function Runtime:start_countdown(interval, callback)
 end
 
 function Runtime:stop()
+    if lifecycle ~= nil and lifecycle.release(self.scope_name) then
+        self.scope = nil
+        self.level_trigger = nil
+        self.countdown_timer = nil
+        return
+    end
     if self.scope ~= nil then
         self.scope:clear()
     else
@@ -77,4 +94,5 @@ function Runtime:stop()
     self.scope = nil
 end
 
+JiuDou.publish("gameplay.rogue.runtime", module)
 return module

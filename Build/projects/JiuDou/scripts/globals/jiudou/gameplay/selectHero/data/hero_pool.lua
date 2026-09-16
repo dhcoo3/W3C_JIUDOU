@@ -1,10 +1,9 @@
 --- 英雄池数据层。
 --- 负责声明入池顺序，并由自动生成的单位配置构造选将展示数据。
-local units = require "config.units"
+local units = JiuDou.config.units
 
 local module = {}
 
-local PORTRAIT_ROOT = "ui\\selectHero\\portraits\\"
 local HERO_RAWCODES = {
     "H0W0",
     "H0N0",
@@ -23,7 +22,6 @@ local HERO_RAWCODES = {
 ---@field strengthGrowth integer 力量成长
 ---@field agilityGrowth integer 敏捷成长
 ---@field intelligenceGrowth integer 智力成长
----@field portrait string 肖像贴图路径
 ---@field abilities string[] 四个英雄技能 Rawcode
 
 local function split_rawcodes(rawcodes)
@@ -51,7 +49,6 @@ local function build_hero(rawcode)
         strengthGrowth = unit.STRplus or 0,
         agilityGrowth = unit.AGIplus or 0,
         intelligenceGrowth = unit.INTplus or 0,
-        portrait = PORTRAIT_ROOT .. string.lower(rawcode) .. ".blp",
         abilities = split_rawcodes(unit.heroAbilList),
     }
 end
@@ -88,4 +85,5 @@ function module.contains(rawcode)
     return hero_by_rawcode[rawcode] ~= nil
 end
 
+JiuDou.publish("gameplay.selectHero.data.hero_pool", module)
 return module

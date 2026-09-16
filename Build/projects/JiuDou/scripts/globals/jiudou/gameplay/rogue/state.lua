@@ -1,5 +1,5 @@
 --- 每名玩家独立的肉鸽状态。
-local jass = require "jass.common"
+local jass = J.Common
 
 local module = {}
 local by_player_id = {}
@@ -43,4 +43,5 @@ function module.reset()
     by_hero = {}
 end
 
+JiuDou.publish("gameplay.rogue.state", module)
 return module

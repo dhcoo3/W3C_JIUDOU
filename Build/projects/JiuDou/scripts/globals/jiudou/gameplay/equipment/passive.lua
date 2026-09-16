@@ -1,7 +1,7 @@
 --- 普通被动词条处理。
 --- 数值型被动参与属性聚合，事件型被动交给自动技能统一执行器处理。
-local config = require "config.equipment"
-local generator = require "equipment.generator"
+local config = JiuDou.config.equipment
+local generator = JiuDou.module("gameplay.equipment.generator")
 
 local module = {}
 
@@ -95,4 +95,5 @@ function module.get_all_ids()
     return result
 end
 
+JiuDou.publish("gameplay.equipment.passive", module)
 return module

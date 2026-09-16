@@ -1,16 +1,19 @@
 --- 四区域神秘商店。
 --- 商店库存和价格由 Warcraft 原生商店处理；购买装备箱后由房主确定装备结果，
 --- 再把完整实例同步给所有客户端，避免各客户端重新随机出不同装备。
-local jass = require "jass.common"
-local config = require "config.mystery_shop"
-local item_config = require "config.items"
-local equipment = require "equipment.main"
-local equipment_instance = require "equipment.instance"
-local courier = require "courier.main"
-local sync = require "mysteryShop.sync"
-local box_result = require "mysteryShop.box_result"
+local jass = J.Common
+local config = JiuDou.config.mystery_shop
+local item_config = JiuDou.config.items
+local equipment = JiuDou.module("gameplay.equipment.main")
+local equipment_instance = JiuDou.module("gameplay.equipment.instance")
+local courier = JiuDou.module("gameplay.courier.main")
+local sync = JiuDou.module("gameplay.mysteryShop.sync")
+local box_result = JiuDou.module("gameplay.mysteryShop.box_result")
 
 local module = {}
+local lifecycle = JiuDou.core and JiuDou.core.lifecycle
+local resource_api = JiuDou.core and JiuDou.core.resource
+local runtime_scope = nil
 local started = false
 local enabled = false
 local sell_trigger = nil
@@ -86,14 +89,7 @@ local function disable_default_stock_trigger()
         return false
     end
 
-    local stock_trigger = nil
-    local loaded, globals = pcall(require, "jass.globals")
-    if loaded and type(globals) == "table" then
-        stock_trigger = globals.bj_stockItemPurchased
-    end
-    if stock_trigger == nil then
-        stock_trigger = rawget(_G, "bj_stockItemPurchased")
-    end
+    local stock_trigger = rawget(_G, "bj_stockItemPurchased")
     if stock_trigger == nil then
         print("神秘商店提示：未找到 Blizzard 默认库存移除触发器")
         return false
@@ -407,6 +403,7 @@ local function register_sell_event()
         return false
     end
     sell_trigger = jass.CreateTrigger()
+    if runtime_scope ~= nil then resource_api.trigger(runtime_scope, sell_trigger) end
     -- EVENT_PLAYER_UNIT_SELL_ITEM 按出售单位所有者归属触发。
     -- 神秘商店由中立被动玩家(15)拥有，不能按购买英雄所属玩家注册。
     jass.TriggerRegisterPlayerUnitEvent(
@@ -435,6 +432,7 @@ local function register_consumable_use_event()
         return false
     end
     consumable_use_trigger = jass.CreateTrigger()
+    if runtime_scope ~= nil then resource_api.trigger(runtime_scope, consumable_use_trigger) end
     for _, player_id in ipairs(sorted_active_player_ids()) do
         jass.TriggerRegisterPlayerUnitEvent(
             consumable_use_trigger,
@@ -454,6 +452,12 @@ function module.start(hero_results)
     if started then
         return false
     end
+    runtime_scope = lifecycle and lifecycle.acquire("mysteryShop.main", function()
+        started, enabled, sell_trigger, consumable_use_trigger = false, false, nil, nil
+        event_sequence, shop_by_unit, active_player_by_id, hero_by_player = 0, {}, {}, {}
+        processed_items, processed_events, processed_uids = {}, {}, {}
+        sync.stop()
+    end) or nil
     hero_results = hero_results or {}
     local active_count = 0
     for _, result in ipairs(hero_results) do
@@ -479,6 +483,10 @@ function module.start(hero_results)
     return true
 end
 
+function module.stop()
+    return lifecycle ~= nil and lifecycle.release("mysteryShop.main") or false
+end
+
 ---@return boolean started 是否已启动
 function module.is_started()
     return started
@@ -492,4 +500,5 @@ end
 module.handle_sell = on_sell
 module.handle_consumable_use = on_consumable_use
 
+JiuDou.publish("gameplay.mysteryShop.main", module)
 return module

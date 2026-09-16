@@ -1,6 +1,6 @@
 --- 特殊怪生成属性同步通道；只接受 Player(0) 广播的玩家概率加成绝对值。
-local jass = require "jass.common"
-local platform_sync = require "platform.sync"
+local jass = J.Common
+local platform_sync = JiuDou.module("platform.sync")
 
 local module = {}
 local PREFIX = "JiuDouSpecialSpawn"
@@ -44,6 +44,12 @@ function module.start(on_message)
     return true
 end
 
+function module.stop()
+    callback = nil
+    if trigger ~= nil and type(jass.DestroyTrigger) == "function" then jass.DestroyTrigger(trigger) end
+    trigger = nil
+end
+
 function module.is_available()
     return platform_sync.is_available()
 end
@@ -70,4 +76,5 @@ end
 function module.get_version() return VERSION end
 module.split = split
 
+JiuDou.publish("gameplay.monster.special_spawn_sync", module)
 return module

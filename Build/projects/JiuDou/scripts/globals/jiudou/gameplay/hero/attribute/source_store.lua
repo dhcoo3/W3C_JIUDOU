@@ -1,6 +1,6 @@
 --- 英雄属性来源存储。
 --- 装备、肉鸽、Buff 等系统只通过来源 ID 写入；最终结算由 hero.stats 负责。
-local schema = require "hero.attribute.schema"
+local schema = JiuDou.module("gameplay.hero.attribute.schema")
 
 local module = {}
 local sources_by_hero = {}
@@ -70,4 +70,5 @@ function module.release(hero)
     sources_by_hero[hero] = nil
 end
 
+JiuDou.publish("gameplay.hero.attribute.source_store", module)
 return module

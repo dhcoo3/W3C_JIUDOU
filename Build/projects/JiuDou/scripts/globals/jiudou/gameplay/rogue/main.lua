@@ -1,18 +1,19 @@
 --- 肉鸽系统总入口：升级队列、房主权威三选一、同步发放和公共查询。
-local jass = require "jass.common"
-local config = require "rogue.config"
-local state_store = require "rogue.state"
-local pool = require "rogue.pool"
-local sync = require "rogue.sync"
-local attribute = require "rogue.attribute"
-local runtime_service = require "rogue.runtime"
-local popup = require "rogue.ui.popup"
-local hero_stats = require "hero.stats"
-local wukong = require "rogue.skills.wukong"
-local arthas = require "rogue.skills.arthas"
-local houyi = require "rogue.skills.houyi"
-local hero_damage = require "rogue.skills.hero_damage"
-local debug = require "rogue.debug"
+local jass = J.Common
+local config = JiuDou.module("gameplay.rogue.config")
+local state_store = JiuDou.module("gameplay.rogue.state")
+local pool = JiuDou.module("gameplay.rogue.pool")
+local sync = JiuDou.module("gameplay.rogue.sync")
+local attribute = JiuDou.module("gameplay.rogue.attribute")
+local runtime_service = JiuDou.module("gameplay.rogue.runtime")
+local popup = JiuDou.module("gameplay.rogue.ui.popup")
+local hero_stats = JiuDou.module("gameplay.hero.stats")
+local wukong = JiuDou.module("gameplay.rogue.skills.wukong")
+local arthas = JiuDou.module("gameplay.rogue.skills.arthas")
+local houyi = JiuDou.module("gameplay.rogue.skills.houyi")
+local hero_damage = JiuDou.module("gameplay.rogue.skills.hero_damage")
+local debug = JiuDou.module("gameplay.rogue.debug")
+local lifecycle = JiuDou.core and JiuDou.core.lifecycle
 
 local module = {}
 local VERSION = 1
@@ -23,6 +24,10 @@ local session_seed = 1
 local session_id = 1
 local runtime = nil
 local local_selection = {}
+
+local function stop_child(child)
+    if type(child) == "table" and type(child.stop) == "function" then child.stop() end
+end
 
 local function is_integer(value)
     return type(value) == "number" and value == math.floor(value)
@@ -37,6 +42,17 @@ end
 local function contains(choices, effect_id)
     for _, id in ipairs(choices or {}) do if id == effect_id then return true end end
     return false
+end
+
+local function effect_level_text(current_level)
+    current_level = math.max(0, math.floor(tonumber(current_level) or 0))
+    if current_level <= 0 then
+        return "新效果  →  I"
+    end
+    local roman = {"I", "II", "III", "IV"}
+    return (roman[current_level] or tostring(current_level))
+        .. "  →  "
+        .. (roman[current_level + 1] or tostring(current_level + 1))
 end
 
 local function show_local_offer(state)
@@ -54,18 +70,14 @@ local function show_local_offer(state)
     end
     local_selection[state.playerId] = nil
     local shown = popup.show({
-        hero = state.heroDefinition,
-        heroRawcode = state.heroRawcode,
-        heroLevel = offer.heroLevel,
-        offerSerial = offer.serial,
-        choices = choices,
-        remainingSeconds = offer.remainingSeconds,
-        freeRefreshRemaining = offer.freeRefreshRemaining,
-        bonusRefreshRemaining = state.bonusRefreshCount,
-        onSelected = function(effect_id)
-            if state.currentOffer == offer and contains(offer.choices, effect_id) then
+        onSelected = function(slot)
+            local choice = choices[slot]
+            local effect_id = choice and choice.effect and choice.effect.effectId
+            if state.currentOffer == offer and effect_id ~= nil and contains(offer.choices, effect_id) then
                 local_selection[state.playerId] = effect_id
-                popup.set_selected(effect_id)
+                popup.set_selected(slot)
+                popup.set_confirm_text("确认强化")
+                popup.set_confirm_enabled(true)
             end
         end,
         onRefresh = function()
@@ -84,7 +96,39 @@ local function show_local_offer(state)
             ))
         end,
     })
-    if not shown then print("肉鸽界面显示失败：" .. popup.get_last_error()) end
+    if not shown then
+        print("肉鸽界面显示失败：" .. popup.get_last_error())
+        return
+    end
+
+    popup.set_title("命运强化")
+    popup.set_subtitle("从 3 项肉鸽强化中选择 1 项")
+    local hero_name = state.heroDefinition and state.heroDefinition.name or state.heroRawcode or "英雄"
+    popup.set_hero_name(hero_name)
+    popup.set_hero_level(string.format("英雄等级 %d  ·  奖励 #%d", offer.heroLevel, offer.serial))
+    if type(state.heroRawcode) == "string" and state.heroRawcode ~= "" then
+        local portrait = japi.AssetsImage("selectHero/portraits/" .. string.lower(state.heroRawcode))
+        if type(portrait) == "string" and portrait ~= "" then
+            popup.set_hero_portrait(portrait)
+        end
+    end
+    popup.set_remaining_seconds(string.format("%d 秒", math.max(0, tonumber(offer.remainingSeconds) or 0)))
+    local refresh_total = math.max(0, offer.freeRefreshRemaining or 0)
+        + math.max(0, state.bonusRefreshCount or 0)
+    popup.set_refresh_text(string.format("刷新强化（%d）", refresh_total))
+    popup.set_refresh_enabled(refresh_total > 0)
+    popup.set_confirm_text("请选择强化")
+    popup.set_confirm_enabled(false)
+
+    for slot, choice in ipairs(choices) do
+        local effect = choice.effect
+        popup.set_card_type(slot, effect.type == "Skill" and "英雄技能" or "通用强化")
+        popup.set_card_name(slot, effect.name)
+        popup.set_card_level(slot, effect_level_text(choice.currentLevel))
+        popup.set_card_description(slot, config.format_description(effect, choice.nextLevel))
+        popup.set_card_icon(slot, effect.icon)
+    end
+    popup.set_selected(nil)
 end
 
 local function encode_offer(state, serial, revision, choices, free_refresh, bonus_refresh)
@@ -238,7 +282,9 @@ local function apply_refresh_grant(parts, sender_id)
     if state == nil or grant_serial < state.offerSerial then return end
     state.bonusRefreshCount = new_bonus
     if sync.get_local_player_id() == player_id and state.currentOffer ~= nil then
-        popup.set_refresh_remaining(state.currentOffer.freeRefreshRemaining, new_bonus)
+        local refresh_total = math.max(0, state.currentOffer.freeRefreshRemaining or 0) + math.max(0, new_bonus or 0)
+        popup.set_refresh_text(string.format("刷新强化（%d）", refresh_total))
+        popup.set_refresh_enabled(refresh_total > 0)
     end
 end
 
@@ -303,7 +349,7 @@ local function start_countdown()
             if offer ~= nil then
                 offer.remainingSeconds = math.max(0, offer.remainingSeconds - 1)
                 if sync.get_local_player_id() == state.playerId then
-                    popup.set_remaining_seconds(offer.remainingSeconds)
+                    popup.set_remaining_seconds(string.format("%d 秒", math.max(0, tonumber(offer.remainingSeconds) or 0)))
                 end
                 if offer.remainingSeconds <= 0 and sync.is_host() then
                     local selected = offer.choices[1]
@@ -329,6 +375,19 @@ function module.start(hero_results, seed)
         return false
     end
     started = true
+    if lifecycle ~= nil then
+        lifecycle.acquire("rogue.main", function()
+            stop_child(hero_damage)
+            stop_child(houyi)
+            stop_child(arthas)
+            stop_child(wukong)
+            if runtime ~= nil then runtime:stop() end
+            sync.stop()
+            state_store.reset()
+            runtime, local_selection = nil, {}
+            started, sync_available, critical_enabled = false, false, false
+        end)
+    end
     session_seed = math.max(1, math.floor(tonumber(seed) or 1))
     session_id = session_seed % 2147483647
     if session_id < 1 then session_id = 1 end
@@ -356,6 +415,10 @@ function module.start(hero_results, seed)
     debug.start(module)
     print(string.format("肉鸽系统已启动：玩家=%d，同步=%s", count_states(), tostring(sync_available)))
     return true
+end
+
+function module.stop()
+    return lifecycle ~= nil and lifecycle.release("rogue.main") or false
 end
 
 function module.get_skill_value(hero, skill_rawcode, modifier_key)
@@ -475,4 +538,5 @@ function module.debug_health(player_id)
     return true
 end
 
+JiuDou.publish("gameplay.rogue.main", module)
 return module

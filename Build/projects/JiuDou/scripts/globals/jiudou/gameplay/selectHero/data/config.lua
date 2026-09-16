@@ -1,6 +1,6 @@
 --- 随机选将配置层。
 --- 负责候选数量、刷新额度、玩家范围和出生区域等只读数据。
-local regions = require "config.regions"
+local regions = JiuDou.config.regions
 
 local module = {}
 
@@ -70,4 +70,5 @@ function module.get_spawn_block(block_id)
     return nil
 end
 
+JiuDou.publish("gameplay.selectHero.data.config", module)
 return module

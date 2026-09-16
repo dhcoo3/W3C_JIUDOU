@@ -1,16 +1,21 @@
 --- 阿尔萨斯技能运行时：死亡缠绕、凛风冲击、霜之哀伤与亡灵大军。
 --- 伤害、控制、召唤与特效分开结算；跨玩家的游戏状态不放入本地 UI 分支。
-local jass = require "jass.common"
+local jass = J.Common
 
-local config = require "rogue.config"
-local state_store = require "rogue.state"
-local skill_damage = require "combat.skill_damage"
-local damage_service = require "combat.damage"
-local recovery = require "combat.recovery"
-local frame = require "platform.frame"
-local effect = require "platform.effect"
+local config = JiuDou.module("gameplay.rogue.config")
+local state_store = JiuDou.module("gameplay.rogue.state")
+local skill_damage = JiuDou.module("gameplay.combat.skill_damage")
+local damage_service = JiuDou.module("gameplay.combat.damage")
+local recovery = JiuDou.module("gameplay.combat.recovery")
+local effect = JiuDou.module("platform.effect")
+
+local counter_ui = UIKit("jiudou_arthas_counter")
 
 local module = {}
+local lifecycle = JiuDou.core and JiuDou.core.lifecycle
+local resource_api = JiuDou.core and JiuDou.core.resource
+local timer_service = JiuDou.core and JiuDou.core.timer
+local runtime_scope = nil
 local started = false
 local heroes = {}
 local hero_states = {}
@@ -22,7 +27,6 @@ local death_trigger = nil
 local update_timer = nil
 local elapsed_ticks = 0
 local now = 0
-local counter_frame = nil
 local counter_frame_attempted = false
 
 local Q_RAWCODE, W_RAWCODE, E_RAWCODE, R_RAWCODE = "A0E1", "A0E2", "A0E3", "A0E4"
@@ -207,20 +211,11 @@ local function local_player_owns(hero)
 end
 
 local function ensure_counter_frame(hero)
-    if counter_frame ~= nil or counter_frame_attempted or not local_player_owns(hero) then return counter_frame end
-    if not frame.is_available() then return nil end
+    if counter_frame_attempted or not local_player_owns(hero) then
+        return counter_frame_attempted and counter_ui or nil
+    end
     counter_frame_attempted = true
-    local game_ui = frame.get_game_ui()
-    local skill_button = frame.find_by_name("CommandButton_10", 0)
-        or frame.find_by_name("CommandButton_2", 0)
-    if game_ui == nil or skill_button == nil then return nil end
-    counter_frame = frame.create("TEXT", "ArthasFrostmourneStackCounter", game_ui, "EscMenuLabelTextTemplate", 6410)
-    if counter_frame == nil then return nil end
-    frame.set_size(counter_frame, 0.04, 0.022)
-    frame.set_point(counter_frame, frame.POINT_BOTTOMRIGHT, skill_button, frame.POINT_BOTTOMRIGHT, -0.002, 0.002)
-    frame.set_text(counter_frame, "")
-    frame.set_visible(counter_frame, false)
-    return counter_frame
+    return counter_ui
 end
 
 local function update_counter_frame(hero, stacks, max_stacks)
@@ -228,10 +223,10 @@ local function update_counter_frame(hero, stacks, max_stacks)
     local widget = ensure_counter_frame(hero)
     if widget == nil then return end
     if stacks > 0 then
-        frame.set_text(widget, string.format("|cffffd45e%d/%d|r", stacks, max_stacks))
-        frame.set_visible(widget, true)
+        widget:set_text(string.format("|cffffd45e%d/%d|r", stacks, max_stacks))
+        widget:show()
     else
-        frame.set_visible(widget, false)
+        widget:hide()
     end
 end
 
@@ -731,6 +726,11 @@ local function register_events()
     spell_trigger = jass.CreateTrigger()
     attack_trigger = jass.CreateTrigger()
     death_trigger = jass.CreateTrigger()
+    if runtime_scope ~= nil then
+        resource_api.trigger(runtime_scope, spell_trigger)
+        resource_api.trigger(runtime_scope, attack_trigger)
+        resource_api.trigger(runtime_scope, death_trigger)
+    end
     for player_id = 0, 15 do
         local player = jass.Player(player_id)
         jass.TriggerRegisterPlayerUnitEvent(spell_trigger, player, jass.EVENT_PLAYER_UNIT_SPELL_EFFECT, nil)
@@ -773,6 +773,9 @@ end
 
 function module.start(hero_results)
     if started then return false end
+    runtime_scope = lifecycle and lifecycle.acquire("rogue.skills.arthas", function()
+        started, spell_trigger, attack_trigger, death_trigger, update_timer = false, nil, nil, nil, nil
+    end) or nil
     started = true
     Q_ID, W_ID, E_ID, R_ID = rawcode_to_integer(Q_RAWCODE), rawcode_to_integer(W_RAWCODE),
         rawcode_to_integer(E_RAWCODE), rawcode_to_integer(R_RAWCODE)
@@ -786,13 +789,17 @@ function module.start(hero_results)
         end
     end
     register_events()
-    update_timer = jass.CreateTimer()
-    if update_timer ~= nil then jass.TimerStart(update_timer, TICK_SECONDS, true, update_states) end
+    update_timer = timer_service and timer_service.every(TICK_SECONDS, update_states, runtime_scope) or nil
     return true
+end
+
+function module.stop()
+    return lifecycle ~= nil and lifecycle.release("rogue.skills.arthas") or false
 end
 
 function module.get_state(hero)
     return hero_states[hero]
 end
 
+JiuDou.publish("gameplay.rogue.skills.arthas", module)
 return module

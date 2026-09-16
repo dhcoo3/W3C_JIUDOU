@@ -1,16 +1,19 @@
 --- PVE 原生金币系统。
 --- 金币账户使用 Warcraft III 原生 PLAYER_STATE_RESOURCE_GOLD；Lua 只保存击杀结算状态。
-local jass = require "jass.common"
-local config = require "config.gold"
-local units = require "config.units"
-local monster_config = require "monster.config"
-local formula = require "gold.formula"
-local sync = require "gold.sync"
-local damage_numbers = require "combat.damage_numbers"
-local damage_service = require "combat.damage"
+local jass = J.Common
+local config = JiuDou.config.gold
+local units = JiuDou.config.units
+local monster_config = JiuDou.module("gameplay.monster.config")
+local formula = JiuDou.module("gameplay.gold.formula")
+local sync = JiuDou.module("gameplay.gold.sync")
+local damage_numbers = JiuDou.module("gameplay.combat.damage_numbers")
+local damage_service = JiuDou.module("gameplay.combat.damage")
 local events = JiuDou.core and JiuDou.core.events
 
 local module = {}
+local lifecycle = JiuDou.core and JiuDou.core.lifecycle
+local resource_api = JiuDou.core and JiuDou.core.resource
+local runtime_scope = nil
 
 local HOST_PLAYER_ID = 0
 local MAX_PLAYER_ID = 11
@@ -297,6 +300,10 @@ end
 
 function module.start(selection, hero_results)
     if started then return false end
+    runtime_scope = lifecycle and lifecycle.acquire("gold.main", function()
+        started, sync_available, death_trigger = false, false, nil
+        active_players, hero_players, gold_bonus_by_player = {}, {}, {}
+    end) or nil
     local difficulty, message = monster_config.create_difficulty(selection)
     if difficulty == nil then
         print("金币系统启动失败：" .. tostring(message))
@@ -342,6 +349,7 @@ function module.start(selection, hero_results)
         print("金币系统启动失败：触发器创建失败")
         return false
     end
+    if runtime_scope ~= nil then resource_api.trigger(runtime_scope, death_trigger) end
     if type(jass.TriggerRegisterPlayerUnitEvent) ~= "function" then
         print("金币系统启动失败：缺少单位死亡事件接口")
         return false
@@ -358,8 +366,14 @@ function module.start(selection, hero_results)
     return true
 end
 
+function module.stop()
+    sync.stop()
+    return lifecycle ~= nil and lifecycle.release("gold.main") or false
+end
+
 function module.is_started()
     return started
 end
 
+JiuDou.publish("gameplay.gold.main", module)
 return module

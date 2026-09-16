@@ -1,6 +1,6 @@
 --- 英雄属性到 Warcraft 原生数值的投影器。
 --- 隐藏技能位、生命临时技能和攻速投影都集中在此，业务层不直接处理这些兼容细节。
-local jass = require "jass.common"
+local jass = J.Common
 
 local module = {}
 local MAX_DIGIT_COUNT = 7
@@ -209,4 +209,5 @@ function module.ensure_stat_abilities(hero, abilities)
     return true
 end
 
+JiuDou.publish("gameplay.hero.attribute.native_projector", module)
 return module

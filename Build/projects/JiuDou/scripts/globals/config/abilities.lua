@@ -268,7 +268,7 @@ JiuDou.config.abilities = {
             900,
             900,
         },
-        ["Art"] = "ui\\selectHero\\skills\\a0n1.blp",
+        ["Art"] = "war3mapImage\\selectHero\\skills\\a0n1.blp",
     },
     ["A0N2"] = {
         ["rawcode"] = "A0N2",
@@ -340,7 +340,7 @@ JiuDou.config.abilities = {
             "deathcoil",
         },
         ["Order"] = "deathcoil",
-        ["Art"] = "ui\\selectHero\\skills\\a0n2.blp",
+        ["Art"] = "war3mapImage\\selectHero\\skills\\a0n2.blp",
     },
     ["A0N3"] = {
         ["rawcode"] = "A0N3",
@@ -401,7 +401,7 @@ JiuDou.config.abilities = {
             "B0N2",
             "B0N2",
         },
-        ["Art"] = "ui\\selectHero\\skills\\a0n3.blp",
+        ["Art"] = "war3mapImage\\selectHero\\skills\\a0n3.blp",
     },
     ["A0N4"] = {
         ["rawcode"] = "A0N4",
@@ -473,7 +473,7 @@ JiuDou.config.abilities = {
             "carrionswarm",
         },
         ["Order"] = "carrionswarm",
-        ["Art"] = "ui\\selectHero\\skills\\a0n4.blp",
+        ["Art"] = "war3mapImage\\selectHero\\skills\\a0n4.blp",
     },
     ["A0B1"] = {
         ["rawcode"] = "A0B1",
@@ -740,7 +740,7 @@ JiuDou.config.abilities = {
             "deathcoil",
         },
         ["Order"] = "deathcoil",
-        ["Art"] = "ui\\selectHero\\skills\\a0e1.blp",
+        ["Art"] = "war3mapImage\\selectHero\\skills\\a0e1.blp",
     },
     ["A0E2"] = {
         ["rawcode"] = "A0E2",
@@ -812,7 +812,7 @@ JiuDou.config.abilities = {
             "berserk",
         },
         ["Order"] = "berserk",
-        ["Art"] = "ui\\selectHero\\skills\\a0e2.blp",
+        ["Art"] = "war3mapImage\\selectHero\\skills\\a0e2.blp",
     },
     ["A0E3"] = {
         ["rawcode"] = "A0E3",
@@ -886,8 +886,8 @@ JiuDou.config.abilities = {
             0,
             0,
         },
-        ["Art"] = "ui\\selectHero\\skills\\a0e3.blp",
-        ["ResearchArt"] = "ui\\selectHero\\skills\\a0e3.blp",
+        ["Art"] = "war3mapImage\\selectHero\\skills\\a0e3.blp",
+        ["ResearchArt"] = "war3mapImage\\selectHero\\skills\\a0e3.blp",
     },
     ["A0E4"] = {
         ["rawcode"] = "A0E4",
@@ -949,7 +949,7 @@ JiuDou.config.abilities = {
             "carrionswarm",
         },
         ["Order"] = "carrionswarm",
-        ["Art"] = "ui\\selectHero\\skills\\a0e4.blp",
+        ["Art"] = "war3mapImage\\selectHero\\skills\\a0e4.blp",
     },
     ["A1B1"] = {
         ["rawcode"] = "A1B1",
@@ -1984,7 +1984,7 @@ JiuDou.config.abilities = {
             "roar",
         },
         ["Order"] = "roar",
-        ["Art"] = "ui\\selectHero\\skills\\a0e4.blp",
+        ["Art"] = "war3mapImage\\selectHero\\skills\\a0e4.blp",
     },
     ["A0P1"] = {
         ["rawcode"] = "A0P1",

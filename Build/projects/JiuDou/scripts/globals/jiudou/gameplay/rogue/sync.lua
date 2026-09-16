@@ -1,6 +1,6 @@
 --- 肉鸽同步适配层：只同步请求和房主已经决定的完整结果。
-local jass = require "jass.common"
-local platform_sync = require "platform.sync"
+local jass = J.Common
+local platform_sync = JiuDou.module("platform.sync")
 
 local module = {}
 local PREFIX = "JiuDouRogue"
@@ -44,6 +44,12 @@ function module.start(on_message)
     return true
 end
 
+function module.stop()
+    callback = nil
+    if trigger ~= nil and type(jass.DestroyTrigger) == "function" then jass.DestroyTrigger(trigger) end
+    trigger = nil
+end
+
 function module.is_available() return platform_sync.is_available() end
 function module.is_host() return local_player_id() == 0 end
 function module.get_local_player_id() return local_player_id() end
@@ -63,4 +69,5 @@ function module.send_request(message)
     return module.broadcast(message)
 end
 
+JiuDou.publish("gameplay.rogue.sync", module)
 return module

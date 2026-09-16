@@ -1,5 +1,5 @@
 --- 肉鸽调试入口。肉鸽命令默认关闭；属性诊断命令在测试地图中常开且只读。
-local jass = require "jass.common"
+local jass = J.Common
 
 local module = {}
 local ROGUE_DEBUG_ENABLED = false
@@ -35,4 +35,5 @@ function module.start(rogue)
     return true
 end
 
+JiuDou.publish("gameplay.rogue.debug", module)
 return module

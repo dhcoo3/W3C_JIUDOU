@@ -28,4 +28,5 @@ function module.build(slots, hero_results, initial_slot_count)
     return queue
 end
 
+JiuDou.publish("gameplay.monster.initial_queue", module)
 return module

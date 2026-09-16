@@ -1,13 +1,17 @@
 --- 后羿技能运行时。
 --- 原生物编只负责施法壳、目标约束、Buff 与视觉；所有伤害均经 combat.damage 结算。
-local jass = require "jass.common"
-local config = require "rogue.config"
-local state_store = require "rogue.state"
-local skill_damage = require "combat.skill_damage"
-local damage_service = require "combat.damage"
+local jass = J.Common
+local config = JiuDou.module("gameplay.rogue.config")
+local state_store = JiuDou.module("gameplay.rogue.state")
+local skill_damage = JiuDou.module("gameplay.combat.skill_damage")
+local damage_service = JiuDou.module("gameplay.combat.damage")
 local events = JiuDou.core and JiuDou.core.events
 
 local module = {}
+local lifecycle = JiuDou.core and JiuDou.core.lifecycle
+local resource_api = JiuDou.core and JiuDou.core.resource
+local timer_service = JiuDou.core and JiuDou.core.timer
+local runtime_scope = nil
 local started = false
 local heroes = {}
 local hero_states = {}
@@ -382,6 +386,10 @@ end
 local function register_events()
     spell_trigger = jass.CreateTrigger()
     death_trigger = jass.CreateTrigger()
+    if runtime_scope ~= nil then
+        resource_api.trigger(runtime_scope, spell_trigger)
+        resource_api.trigger(runtime_scope, death_trigger)
+    end
     for player_id = 0, 15 do
         local player = jass.Player(player_id)
         jass.TriggerRegisterPlayerUnitEvent(spell_trigger, player, jass.EVENT_PLAYER_UNIT_SPELL_EFFECT, nil)
@@ -410,6 +418,9 @@ end
 
 function module.start(hero_results)
     if started then return false end
+    runtime_scope = lifecycle and lifecycle.acquire("rogue.skills.houyi", function()
+        started, spell_trigger, death_trigger, mark_timer = false, nil, nil, nil
+    end) or nil
     started = true
     Q_ID, W_ID, E_ID, R_ID = rawcode_to_integer(Q_RAWCODE), rawcode_to_integer(W_RAWCODE),
         rawcode_to_integer(E_RAWCODE), rawcode_to_integer(R_RAWCODE)
@@ -432,9 +443,13 @@ function module.start(hero_results)
         damage_service.subscribe(on_damage_report)
     end
     register_events()
-    mark_timer = jass.CreateTimer()
-    if mark_timer ~= nil then jass.TimerStart(mark_timer, 0.05, true, cleanup_dead_or_expired_marks) end
+    mark_timer = timer_service and timer_service.every(0.05, cleanup_dead_or_expired_marks, runtime_scope) or nil
     return true
 end
 
+function module.stop()
+    return lifecycle ~= nil and lifecycle.release("rogue.skills.houyi") or false
+end
+
+JiuDou.publish("gameplay.rogue.skills.houyi", module)
 return module

@@ -1,13 +1,16 @@
 --- 玩家专属飞行信使。
 --- 信使使用原生 6 格物品栏，可携带任意物品；范围合成只处理地面的已绑定装备实例。
 --- 合成结果由房主生成并分批同步，避免大量物品时同步消息过长。
-local jass = require "jass.common"
-local item_config = require "config.items"
-local equipment_instance = require "equipment.instance"
-local equipment_generator = require "equipment.generator"
-local fusion_protocol = require "courier.fusion_protocol"
+local jass = J.Common
+local item_config = JiuDou.config.items
+local equipment_instance = JiuDou.module("gameplay.equipment.instance")
+local equipment_generator = JiuDou.module("gameplay.equipment.generator")
+local fusion_protocol = JiuDou.module("gameplay.courier.fusion_protocol")
 
 local module = {}
+local lifecycle = JiuDou.core and JiuDou.core.lifecycle
+local resource_api = JiuDou.core and JiuDou.core.resource
+local runtime_scope = nil
 
 local COURIER_RAWCODE = "F0B0"
 local FOLLOW_RAWCODE = "A9T4"
@@ -529,6 +532,7 @@ local function register_spell_events()
         return false
     end
     spell_trigger = jass.CreateTrigger()
+    if runtime_scope ~= nil then resource_api.trigger(runtime_scope, spell_trigger) end
     for player_id = 0, 15 do
         jass.TriggerRegisterPlayerUnitEvent(spell_trigger, jass.Player(player_id), jass.EVENT_PLAYER_UNIT_SPELL_EFFECT, nil)
     end
@@ -594,6 +598,12 @@ function module.start(hero_results, sync_adapter, allow_fusion, allow_local_fall
         return false
     end
     started = true
+    runtime_scope = lifecycle and lifecycle.acquire("courier.main", function()
+        started, spell_trigger, sync_module = false, nil, nil
+        fusion_enabled, local_fallback = false, false
+        courier_by_player, player_by_courier, hero_by_courier = {}, {}, {}
+        processed_batches, pending_batches = {}, {}
+    end) or nil
     sync_module = sync_adapter
     fusion_enabled = allow_fusion == true
     local_fallback = allow_local_fallback == true
@@ -609,4 +619,9 @@ function module.start(hero_results, sync_adapter, allow_fusion, allow_local_fall
     return true
 end
 
+function module.stop()
+    return lifecycle ~= nil and lifecycle.release("courier.main") or false
+end
+
+JiuDou.publish("gameplay.courier.main", module)
 return module

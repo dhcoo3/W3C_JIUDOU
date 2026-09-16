@@ -1,11 +1,11 @@
 --- PVE 刷怪配置层。
 --- 负责从自动生成的单位、技能和区域配置中构造刷怪区域与技能行为。
-local regions = require "config.regions"
-local units = require "config.units"
-local abilities = require "config.abilities"
-local buffs = require "config.buffs"
-local boss_affixes = require "config.boss_affixes"
-local mode_config = require "runMode.config"
+local regions = JiuDou.config.regions
+local units = JiuDou.config.units
+local abilities = JiuDou.config.abilities
+local buffs = JiuDou.config.buffs
+local boss_affixes = JiuDou.config.boss_affixes
+local mode_config = JiuDou.module("gameplay.runMode.config")
 
 local module = {}
 
@@ -512,4 +512,5 @@ function module.create_difficulty(selection)
     return difficulty, nil
 end
 
+JiuDou.publish("gameplay.monster.config", module)
 return module

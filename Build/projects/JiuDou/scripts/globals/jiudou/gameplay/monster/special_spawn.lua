@@ -1,8 +1,8 @@
 --- 特殊怪概率属性接口及确定性死亡判定。
 --- 外部商城应由 Player(0) 调用 set_bonus_source，再通过同步通道向全体客户端发布结果。
-local jass = require "jass.common"
-local sync = require "monster.special_spawn_sync"
-local random = require "monster.random"
+local jass = J.Common
+local sync = JiuDou.module("gameplay.monster.special_spawn_sync")
+local random = JiuDou.module("gameplay.monster.random")
 
 local module = {}
 
@@ -221,4 +221,5 @@ end
 
 function module.is_started() return started end
 
+JiuDou.publish("gameplay.monster.special_spawn", module)
 return module

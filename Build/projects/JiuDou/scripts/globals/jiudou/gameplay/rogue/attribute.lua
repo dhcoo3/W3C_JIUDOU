@@ -1,7 +1,7 @@
 --- 通用肉鸽属性应用。
-local jass = require "jass.common"
-local config = require "rogue.config"
-local hero_stats = require "hero.stats"
+local jass = J.Common
+local config = JiuDou.module("gameplay.rogue.config")
+local hero_stats = JiuDou.module("gameplay.hero.stats")
 
 local module = {}
 
@@ -52,4 +52,5 @@ function module.refresh(state)
     return true
 end
 
+JiuDou.publish("gameplay.rogue.attribute", module)
 return module

@@ -1,8 +1,8 @@
 --- 装备结果生成器。
 --- 只有房主调用掉落和合成生成；所有随机使用可复现的确定性随机流。
-local config = require "config.equipment"
-local random = require "monster.random"
-local instance = require "equipment.instance"
+local config = JiuDou.config.equipment
+local random = JiuDou.module("gameplay.monster.random")
+local instance = JiuDou.module("gameplay.equipment.instance")
 
 local module = {}
 local session_seed = 13579
@@ -201,4 +201,5 @@ function module.roll_percent(key, chance)
     return random.next_integer(rng, 1, 100) <= chance
 end
 
+JiuDou.publish("gameplay.equipment.generator", module)
 return module

@@ -1,7 +1,7 @@
 --- 装备同步适配层。
 --- 业务只发送请求或完整结果，不在同步回调中重新随机。
-local jass = require "jass.common"
-local platform_sync = require "platform.sync"
+local jass = J.Common
+local platform_sync = JiuDou.module("platform.sync")
 
 local module = {}
 local PREFIX = "JiuDouEquipment"
@@ -53,6 +53,12 @@ function module.start(on_message)
     return true
 end
 
+function module.stop()
+    callback = nil
+    if trigger ~= nil and type(jass.DestroyTrigger) == "function" then jass.DestroyTrigger(trigger) end
+    trigger = nil
+end
+
 ---@return boolean available 当前是否能进行跨客户端同步
 function module.is_available()
     return platform_sync.is_available()
@@ -101,4 +107,5 @@ end
 
 module.split = split
 
+JiuDou.publish("gameplay.equipment.sync", module)
 return module

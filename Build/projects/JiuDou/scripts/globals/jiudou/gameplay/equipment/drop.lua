@@ -1,11 +1,14 @@
 --- 中立敌对怪物死亡后的房主权威装备掉落。
 --- 掉落结果先同步完整实例，再由所有客户端在相同坐标创建相同道具。
-local jass = require "jass.common"
-local units = require "config.units"
-local generator = require "equipment.generator"
-local instance = require "equipment.instance"
+local jass = J.Common
+local units = JiuDou.config.units
+local generator = JiuDou.module("gameplay.equipment.generator")
+local instance = JiuDou.module("gameplay.equipment.instance")
 
 local module = {}
+local lifecycle = JiuDou.core and JiuDou.core.lifecycle
+local resource_api = JiuDou.core and JiuDou.core.resource
+local runtime_scope = nil
 local death_trigger = nil
 local sync_broadcast = nil
 local enabled = true
@@ -166,15 +169,23 @@ end
 ---@param broadcast fun(message:string) 同步广播函数
 ---@param allow boolean 是否启用装备掉落
 function module.start(broadcast, allow)
+    runtime_scope = lifecycle and lifecycle.acquire("equipment.drop", function()
+        death_trigger, sync_broadcast, enabled = nil, nil, false
+    end) or nil
     sync_broadcast = broadcast
     enabled = allow ~= false
     if death_trigger ~= nil or not enabled then
         return enabled
     end
     death_trigger = jass.CreateTrigger()
+    if runtime_scope ~= nil then resource_api.trigger(runtime_scope, death_trigger) end
     jass.TriggerRegisterPlayerUnitEvent(death_trigger, jass.Player(NEUTRAL_HOSTILE_PLAYER_ID), jass.EVENT_PLAYER_UNIT_DEATH, nil)
     jass.TriggerAddAction(death_trigger, on_death)
     return true
+end
+
+function module.stop()
+    return lifecycle ~= nil and lifecycle.release("equipment.drop") or false
 end
 
 ---@param host_check fun():boolean 判断本地是否为房主
@@ -188,4 +199,5 @@ end
 
 module.handle_result = create_result
 
+JiuDou.publish("gameplay.equipment.drop", module)
 return module

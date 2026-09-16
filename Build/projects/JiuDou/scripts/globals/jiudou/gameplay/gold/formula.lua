@@ -60,4 +60,5 @@ function module.split_by_damage(pool, contributions)
     return awards
 end
 
+JiuDou.publish("gameplay.gold.formula", module)
 return module

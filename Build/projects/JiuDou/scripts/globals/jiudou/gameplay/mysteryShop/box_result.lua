@@ -87,4 +87,5 @@ end
 
 function module.get_version() return tonumber(VERSION) end
 
+JiuDou.publish("gameplay.mysteryShop.box_result", module)
 return module

@@ -1,6 +1,6 @@
 --- 组合套装统计和被动效果。
 --- 重复相同部件只计一次，3 件效果建立在 2 件效果之上。
-local config = require "config.equipment"
+local config = JiuDou.config.equipment
 
 local module = {}
 
@@ -96,4 +96,5 @@ function module.get_stat_bonus(equipments)
     return bonus
 end
 
+JiuDou.publish("gameplay.equipment.combo", module)
 return module

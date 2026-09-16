@@ -1,7 +1,7 @@
 --- 模式选择界面层。
 --- 负责房主弹窗、按钮回调和返回导航，不处理同步或玩法初始化。
-local jass = require "jass.common"
-local config = require "runMode.config"
+local jass = J.Common
+local config = JiuDou.module("gameplay.runMode.config")
 
 local M = {}
 local HOST_PLAYER_ID = 0
@@ -156,4 +156,5 @@ function M.show_root(on_selection)
     show_root()
 end
 
+JiuDou.publish("gameplay.runMode.dialog", M)
 return M

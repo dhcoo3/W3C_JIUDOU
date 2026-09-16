@@ -1,12 +1,12 @@
 --- 英雄统一属性聚合服务。
 --- 装备、肉鸽等系统提交来源数值；本模块统一投影到 Warcraft 原生属性，并向本地 UI 发布快照。
-local jass = require "jass.common"
-local equipment_config = require "config.equipment"
-local attribute_config = require "config.attributes"
-local unit_config = require "config.units"
-local attribute_schema = require "hero.attribute.schema"
-local source_store = require "hero.attribute.source_store"
-local native_projector = require "hero.attribute.native_projector"
+local jass = J.Common
+local equipment_config = JiuDou.config.equipment
+local attribute_config = JiuDou.config.attributes
+local unit_config = JiuDou.config.units
+local attribute_schema = JiuDou.module("gameplay.hero.attribute.schema")
+local source_store = JiuDou.module("gameplay.hero.attribute.source_store")
+local native_projector = JiuDou.module("gameplay.hero.attribute.native_projector")
 local events = JiuDou.core and JiuDou.core.events
 local timer_service = JiuDou.core and JiuDou.core.timer
 local resource_api = JiuDou.core and JiuDou.core.resource
@@ -572,4 +572,5 @@ function module.get_definitions()
     return attribute_config.attributes
 end
 
+JiuDou.publish("gameplay.hero.stats", module)
 return module

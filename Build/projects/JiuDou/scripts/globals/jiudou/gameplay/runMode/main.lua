@@ -1,27 +1,28 @@
 --- Mode selection and staged PVE startup.
-local jass = require "jass.common"
-local config = require "runMode.config"
-local dialog = require "runMode.dialog"
-local bottom_hud = require "hud.bottom"
-local sync = require "platform.sync"
-local select_hero = require "selectHero.main"
-local monster = require "monster.main"
-local equipment = require "equipment.main"
-local rogue = require "rogue.main"
-local gold = require "gold.main"
-local experience = require "experience.main"
-local mystery_shop = require "mysteryShop.main"
-local damage_numbers = require "combat.damage_numbers"
-local damage_service = require "combat.damage"
-local hero_stats = require "hero.stats"
-local attribute_ui = require "hero.ui.attributes"
-local attribute_tooltip = require "hero.ui.attribute_tooltip"
+local jass = J.Common
+local config = JiuDou.module("gameplay.runMode.config")
+local dialog = JiuDou.module("gameplay.runMode.dialog")
+local bottom_hud = JiuDou.module("gameplay.hud.bottom")
+local sync = JiuDou.module("platform.sync")
+local select_hero = JiuDou.module("gameplay.selectHero.main")
+local monster = JiuDou.module("gameplay.monster.main")
+local equipment = JiuDou.module("gameplay.equipment.main")
+local rogue = JiuDou.module("gameplay.rogue.main")
+local gold = JiuDou.module("gameplay.gold.main")
+local experience = JiuDou.module("gameplay.experience.main")
+local mystery_shop = JiuDou.module("gameplay.mysteryShop.main")
+local damage_numbers = JiuDou.module("gameplay.combat.damage_numbers")
+local damage_service = JiuDou.module("gameplay.combat.damage")
+local hero_stats = JiuDou.module("gameplay.hero.stats")
+local attribute_ui = JiuDou.module("gameplay.hero.ui.attributes")
+local attribute_tooltip = JiuDou.module("gameplay.hero.ui.attribute_tooltip")
 
 local M = {}
 local SYNC_PREFIX = "JiuDouMode"
 local procedure = JiuDou.core and JiuDou.core.procedure
 local events = JiuDou.core and JiuDou.core.events
 local timer_service = JiuDou.core and JiuDou.core.timer
+local lifecycle = JiuDou.core and JiuDou.core.lifecycle
 
 local started = false
 local startup_scheduled = false
@@ -207,6 +208,9 @@ local function start_game_mode(selection, hero_results, monster_seed)
     ))
 
     if selection.category == config.CATEGORY_PVE then
+        if lifecycle ~= nil then
+            lifecycle.begin("pve:" .. tostring(monster_seed or 0))
+        end
         print(string.format("PVE 英雄选择完成：%d 名玩家已创建英雄", #(hero_results or {})))
         change_phase("prepare", {
             selection = selection,

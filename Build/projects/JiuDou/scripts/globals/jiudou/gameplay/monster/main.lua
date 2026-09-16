@@ -1,16 +1,16 @@
 --- PVE 刷怪业务入口。
 --- 负责基于同步种子确定性生成怪物变体、固定节拍复活与区域内 AI。
-local jass = require "jass.common"
-local config = require "monster.config"
-local random = require "monster.random"
-local damage_numbers = require "combat.damage_numbers"
-local gold = require "gold.main"
-local experience = require "experience.main"
-local special_spawn = require "monster.special_spawn"
-local timeline_service = require "monster.timeline"
-local initial_queue = require "monster.initial_queue"
-local cataclysm_ui = require "monster.ui.cataclysm"
-local special_count_ui = require "monster.ui.special_count"
+local jass = J.Common
+local config = JiuDou.module("gameplay.monster.config")
+local random = JiuDou.module("gameplay.monster.random")
+local damage_numbers = JiuDou.module("gameplay.combat.damage_numbers")
+local gold = JiuDou.module("gameplay.gold.main")
+local experience = JiuDou.module("gameplay.experience.main")
+local special_spawn = JiuDou.module("gameplay.monster.special_spawn")
+local timeline_service = JiuDou.module("gameplay.monster.timeline")
+local initial_queue = JiuDou.module("gameplay.monster.initial_queue")
+local cataclysm_ui = JiuDou.module("gameplay.monster.ui.cataclysm")
+local special_count_ui = JiuDou.module("gameplay.monster.ui.special_count")
 
 local module = {}
 
@@ -1041,4 +1041,5 @@ function module.start(selection, selections, session_seed)
     return true
 end
 
+JiuDou.publish("gameplay.monster.main", module)
 return module

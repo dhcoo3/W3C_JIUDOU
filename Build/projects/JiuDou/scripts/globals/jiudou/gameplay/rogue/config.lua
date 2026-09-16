@@ -1,7 +1,7 @@
 --- 肉鸽配置访问与启动校验。
-local data = require "config.roguelike"
-local abilities = require "config.abilities"
-local units = require "config.units"
+local data = JiuDou.config.roguelike
+local abilities = JiuDou.config.abilities
+local units = JiuDou.config.units
 
 local module = {data = data}
 
@@ -117,4 +117,5 @@ function module.format_description(effect, level)
     return text
 end
 
+JiuDou.publish("gameplay.rogue.config", module)
 return module

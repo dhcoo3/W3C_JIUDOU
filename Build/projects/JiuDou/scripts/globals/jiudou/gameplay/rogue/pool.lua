@@ -1,5 +1,5 @@
 --- 房主使用的确定性三选一生成器。
-local config = require "rogue.config"
+local config = JiuDou.module("gameplay.rogue.config")
 
 local module = {}
 local MODULUS = 2147483647
@@ -88,4 +88,5 @@ end
 
 function module.signature(choices) return signature(choices) end
 
+JiuDou.publish("gameplay.rogue.pool", module)
 return module

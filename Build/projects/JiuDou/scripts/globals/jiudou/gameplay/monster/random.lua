@@ -49,4 +49,5 @@ function module.next_integer(random, minimum, maximum)
     return minimum + (random.state % range)
 end
 
+JiuDou.publish("gameplay.monster.random", module)
 return module

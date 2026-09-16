@@ -48,6 +48,17 @@ function Scope:own(cleanup)
     return self:add(true, cleanup)
 end
 
+--- 创建隶属于当前作用域的子作用域。
+---@param name string|nil
+---@return table child
+function Scope:child(name)
+    local child = module.scope(tostring(name or self.name .. ":child"))
+    self:add(child, function(value)
+        value:clear()
+    end)
+    return child
+end
+
 function Scope:detach(value)
     for index = #self.resources, 1, -1 do
         if self.resources[index].value == value then
@@ -127,4 +138,3 @@ end
 
 module.Scope = Scope
 JiuDou.core.resource = module
-

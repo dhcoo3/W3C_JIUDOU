@@ -35,6 +35,9 @@ function module.after(delay, callback, scope)
         resource_api.timer(scope, timer)
     end
     common.TimerStart(timer, tonumber(delay) or 0, false, function()
+        if scope ~= nil and type(scope.detach) == "function" then
+            scope:detach(timer)
+        end
         destroy(timer)
         if type(callback) == "function" then
             local ok, message = pcall(callback)
@@ -68,11 +71,13 @@ function module.every(interval, callback, scope)
     return timer
 end
 
-function module.cancel(timer)
+function module.cancel(timer, scope)
     if timer ~= nil then
+        if scope ~= nil and type(scope.detach) == "function" then
+            scope:detach(timer)
+        end
         destroy(timer)
     end
 end
 
 JiuDou.core.timer = module
-

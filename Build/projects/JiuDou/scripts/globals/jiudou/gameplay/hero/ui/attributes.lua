@@ -1,20 +1,21 @@
 --- 英雄属性面板。
 --- 所有 DzFrame 与按键操作仅影响本地显示，不得修改同步游戏状态。
-local jass = require "jass.common"
-local frame = require "platform.frame"
-local input = require "platform.input"
-local hero_stats = require "hero.stats"
-local rogue_state = require "rogue.state"
-local gold = require "gold.main"
-local experience = require "experience.main"
-local special_spawn = require "monster.special_spawn"
-local attribute_config = require "config.attributes"
+local jass = J.Common
+local input = JiuDou.module("platform.input")
+local hero_stats = JiuDou.module("gameplay.hero.stats")
+local rogue_state = JiuDou.module("gameplay.rogue.state")
+local gold = JiuDou.module("gameplay.gold.main")
+local experience = JiuDou.module("gameplay.experience.main")
+local special_spawn = JiuDou.module("gameplay.monster.special_spawn")
+local attribute_config = JiuDou.config.attributes
 local events = JiuDou.core and JiuDou.core.events
+local lifecycle = JiuDou.core and JiuDou.core.lifecycle
+local resource_api = JiuDou.core and JiuDou.core.resource
+
+local ui = UIKit("jiudou_hero_attributes")
 
 local module = {}
 
-local BACKDROP_TEMPLATE = "EscMenuControlBackdropTemplate"
-local TEXT_TEMPLATE = "EscMenuLabelTextTemplate"
 local TAB_KEY = 9
 local KEY_DOWN = 1
 local PROJECTION_LIMITS = {
@@ -23,37 +24,16 @@ local PROJECTION_LIMITS = {
     hidden_armor = 9999,
 }
 
-local next_frame_id = 0
 local active_hero = nil
-local panel = nil
 local hotkey_trigger = nil
 local started = false
 local last_error = ""
+local runtime_scope = nil
+local stats_event_token = nil
 
 local function local_player_id()
     if type(jass.GetLocalPlayer) ~= "function" or type(jass.GetPlayerId) ~= "function" then return nil end
     return jass.GetPlayerId(jass.GetLocalPlayer())
-end
-
-local function create_frame(frame_type, suffix, parent, template)
-    next_frame_id = next_frame_id + 1
-    return frame.create(frame_type, "JiuDouHeroAttributes" .. suffix .. next_frame_id, parent, template, next_frame_id)
-end
-
-local function create_backdrop(parent, suffix, width, height, x, y, texture)
-    local target = create_frame("BACKDROP", suffix, parent, BACKDROP_TEMPLATE)
-    frame.set_size(target, width, height)
-    frame.set_point(target, frame.POINT_CENTER, parent, frame.POINT_CENTER, x, y)
-    if texture ~= nil then frame.set_texture(target, texture, 0) end
-    return target
-end
-
-local function create_text(parent, suffix, width, height, x, y, value)
-    local target = create_frame("TEXT", suffix, parent, TEXT_TEMPLATE)
-    frame.set_size(target, width, height)
-    frame.set_point(target, frame.POINT_CENTER, parent, frame.POINT_CENTER, x, y)
-    frame.set_text(target, value or "")
-    return target
 end
 
 local function ordered_definitions()
@@ -192,7 +172,7 @@ local function format_snapshot(snapshot, growth, gold_bonus, experience_snapshot
 end
 
 local function refresh_panel(snapshot)
-    if panel == nil or active_hero == nil then return end
+    if active_hero == nil then return end
     -- 当前肉鸽来源中的三项主属性只来自等级成长；其他来源仍汇总在主数值中。
     local growth = hero_stats.get_source(active_hero, "rogue")
     local player_id = local_player_id()
@@ -200,7 +180,7 @@ local function refresh_panel(snapshot)
     local experience_snapshot = experience.get_snapshot(active_hero)
     local skill_damage_bonus = get_skill_damage_bonus_percent(active_hero)
     local special_chances = special_spawn.get_chances(player_id)
-    frame.set_text(panel.content, format_snapshot(
+    ui:set_content(format_snapshot(
         snapshot or hero_stats.get_snapshot(active_hero),
         growth,
         gold_bonus,
@@ -211,50 +191,29 @@ local function refresh_panel(snapshot)
 end
 
 function module.toggle()
-    if panel == nil then return false end
-    panel.visible = not panel.visible
-    frame.set_visible(panel.root, panel.visible)
-    if panel.visible then refresh_panel() end
+    if active_hero == nil then return false end
+    if ui:is_visible() then
+        ui:hide()
+    else
+        ui:show()
+        refresh_panel()
+    end
     return true
 end
 
 local function create_panel()
-    if not frame.is_available() then
-        last_error = "缺少 DzFrame 接口：" .. table.concat(frame.get_missing_api_names(), ", ")
-        return false
-    end
-    local parent = frame.get_game_ui()
-    if parent == nil then
-        last_error = "无法获取游戏主界面"
-        return false
-    end
-
-    local root = create_backdrop(parent, "Root", 0.278, 0.480, -0.335, 0.012, "ui\\rogue\\panel.blp")
-    if root == nil or root == 0 then
+    if not ui:show({
+        onToggle = function()
+            module.toggle()
+        end,
+    }) then
         last_error = "属性面板创建失败"
         return false
     end
-    local title = create_text(root, "Title", 0.230, 0.030, 0.0, 0.142, "属性（TAB）")
-    local content = create_text(root, "Content", 0.235, 0.400, 0.0, -0.015, "")
-    local button = create_frame("BUTTON", "ToggleButton", parent, "ScriptDialogButton")
-    frame.set_size(button, 0.078, 0.030)
-    frame.set_point(button, frame.POINT_CENTER, parent, frame.POINT_CENTER, -0.340, 0.278)
-    frame.set_alpha(button, 1)
-    local button_text = create_text(parent, "ToggleText", 0.068, 0.022, -0.340, 0.278, "属性")
-
-    panel = {
-        root = root,
-        title = title,
-        content = content,
-        button = button,
-        buttonText = button_text,
-        visible = false,
-        callbacks = {},
-    }
-    local callback = function() module.toggle() end
-    frame.on_click(button, callback)
-    table.insert(panel.callbacks, callback)
-    frame.set_visible(root, false)
+    ui:set_title("属性（TAB）")
+    ui:set_button_text("属性")
+    ui:set_content("")
+    ui:hide()
     return true
 end
 
@@ -264,6 +223,7 @@ local function register_tab_hotkey()
         return false
     end
     hotkey_trigger = jass.CreateTrigger()
+    if runtime_scope ~= nil then resource_api.trigger(runtime_scope, hotkey_trigger) end
     local callback = function() module.toggle() end
     local registered = input.register_key(hotkey_trigger, TAB_KEY, callback, "JiuDouHeroAttributesHotkey")
     if not registered then
@@ -288,12 +248,18 @@ function module.start(hero_results)
         end
     end
     if active_hero == nil then return false end
+    runtime_scope = lifecycle and lifecycle.acquire("hero.ui.attributes", function()
+        if stats_event_token ~= nil and events ~= nil then events.off(stats_event_token) end
+        stats_event_token = nil
+        active_hero, hotkey_trigger, started = nil, nil, false
+        ui:hide()
+    end) or nil
     started = true
     local on_stats_changed = function(hero, snapshot)
         if hero == active_hero then refresh_panel(snapshot) end
     end
     if events ~= nil and type(events.on) == "function" then
-        events.on("hero.stats_changed", function(data)
+        stats_event_token = events.on("hero.stats_changed", function(data)
             if data ~= nil then
                 on_stats_changed(data.hero, data.snapshot)
             end
@@ -319,6 +285,11 @@ function module.start(hero_results)
     return true
 end
 
+function module.stop()
+    return lifecycle ~= nil and lifecycle.release("hero.ui.attributes") or false
+end
+
 function module.get_last_error() return last_error end
 
+JiuDou.publish("gameplay.hero.ui.attributes", module)
 return module

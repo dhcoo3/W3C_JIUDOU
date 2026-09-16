@@ -1,9 +1,11 @@
 --- PVE 伤害飘字业务模块。
 --- 监听玩家英雄造成的最终伤害，并通过固定 texttag 对象池显示向上飘动的数字。
 --- 普攻及普攻加成沿用原有黄橙色；技能、触发、召唤物和装备自动技能伤害使用蓝色。
-local jass = require "jass.common"
-local damage_service = require "combat.damage"
+local jass = J.Common
+local damage_service = JiuDou.module("gameplay.combat.damage")
 local events = JiuDou.core and JiuDou.core.events
+local lifecycle = JiuDou.core and JiuDou.core.lifecycle
+local timer_service = JiuDou.core and JiuDou.core.timer
 
 local module = {}
 
@@ -51,6 +53,7 @@ local pending_heal_fraction = {}
 local first_damage_logged = false
 ---@type DamageNumberEntry[]
 local pool = {}
+local runtime_scope = nil
 
 local function has_required_api()
     return type(jass.CreateTextTag) == "function"
@@ -299,6 +302,11 @@ function module.start(hero_results)
     if hero_count == 0 then
         return false
     end
+    runtime_scope = lifecycle and lifecycle.acquire("combat.damage_numbers", function()
+        started, update_timer = false, nil
+        elapsed_seconds, next_pool_index, display_sequence = 0.0, 1, 0
+        hero_sources, tracked_heroes, last_hero_life, pool = {}, {}, {}, {}
+    end) or nil
     if not create_pool() or not damage_service.start(hero_results) then
         print("伤害飘字未启动：对象池或受伤事件创建失败")
         return false
@@ -309,15 +317,19 @@ function module.start(hero_results)
         damage_service.subscribe(on_damage_report)
     end
 
-    update_timer = jass.CreateTimer()
+    update_timer = timer_service and timer_service.every(UPDATE_INTERVAL_SECONDS, update_pool, runtime_scope) or nil
     if update_timer == nil then
         print("伤害飘字未启动：对象池计时器创建失败")
         return false
     end
-    jass.TimerStart(update_timer, UPDATE_INTERVAL_SECONDS, true, update_pool)
     started = true
     print(string.format("伤害飘字已启动：英雄=%d，对象池=%d", hero_count, POOL_CAPACITY))
     return true
 end
 
+function module.stop()
+    return lifecycle ~= nil and lifecycle.release("combat.damage_numbers") or false
+end
+
+JiuDou.publish("gameplay.combat.damage_numbers", module)
 return module

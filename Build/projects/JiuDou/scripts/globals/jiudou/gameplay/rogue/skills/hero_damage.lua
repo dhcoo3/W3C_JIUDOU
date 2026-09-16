@@ -1,12 +1,16 @@
 --- 牛魔王的统一伤害结算。
 --- 后羿拥有独立的 rogue.skills.houyi 模块，本文件只处理牛魔王。
-local jass = require "jass.common"
-local config = require "rogue.config"
-local state_store = require "rogue.state"
-local skill_damage = require "combat.skill_damage"
-local damage_service = require "combat.damage"
+local jass = J.Common
+local config = JiuDou.module("gameplay.rogue.config")
+local state_store = JiuDou.module("gameplay.rogue.state")
+local skill_damage = JiuDou.module("gameplay.combat.skill_damage")
+local damage_service = JiuDou.module("gameplay.combat.damage")
 
 local module = {}
+local lifecycle = JiuDou.core and JiuDou.core.lifecycle
+local resource_api = JiuDou.core and JiuDou.core.resource
+local timer_service = JiuDou.core and JiuDou.core.timer
+local runtime_scope = nil
 local started = false
 local heroes = {}
 local states = {}
@@ -96,6 +100,10 @@ end
 local function register_events()
     spell_trigger = jass.CreateTrigger()
     attack_trigger = jass.CreateTrigger()
+    if runtime_scope ~= nil then
+        resource_api.trigger(runtime_scope, spell_trigger)
+        resource_api.trigger(runtime_scope, attack_trigger)
+    end
     for player_id = 0, 15 do
         local player = jass.Player(player_id)
         jass.TriggerRegisterPlayerUnitEvent(spell_trigger, player, jass.EVENT_PLAYER_UNIT_SPELL_EFFECT, nil)
@@ -113,6 +121,10 @@ end
 
 function module.start(hero_results)
     if started then return false end
+    runtime_scope = lifecycle and lifecycle.acquire("rogue.skills.hero_damage", function()
+        started, spell_trigger, attack_trigger, clock_timer, now = false, nil, nil, nil, 0
+        heroes, states = {}, {}
+    end) or nil
     started = true
     B1_ID, B4_ID = rawcode_to_integer("A0B1"), rawcode_to_integer("A0B4")
     for _, result in ipairs(hero_results or {}) do
@@ -122,9 +134,13 @@ function module.start(hero_results)
         end
     end
     register_events()
-    clock_timer = jass.CreateTimer()
-    if clock_timer ~= nil then jass.TimerStart(clock_timer, 0.25, true, function() now = now + 0.25 end) end
+    clock_timer = timer_service and timer_service.every(0.25, function() now = now + 0.25 end, runtime_scope) or nil
     return true
 end
 
+function module.stop()
+    return lifecycle ~= nil and lifecycle.release("rogue.skills.hero_damage") or false
+end
+
+JiuDou.publish("gameplay.rogue.skills.hero_damage", module)
 return module

@@ -1,8 +1,9 @@
 --- 怪物局内时间线。
 --- 管理固定调度与首波分帧生成的计时器生命周期，不包含任何刷怪或随机逻辑。
-local jass = require "jass.common"
+local jass = J.Common
 local timer_service = JiuDou.core and JiuDou.core.timer
 local resource_api = JiuDou.core and JiuDou.core.resource
+local lifecycle = JiuDou.core and JiuDou.core.lifecycle
 
 local module = {}
 local Timeline = {}
@@ -43,12 +44,23 @@ end
 ---@param name string|nil
 ---@return table timeline
 function module.create(name)
-    return setmetatable({
-        scope = resource_api ~= nil and resource_api.scope(name or "monster_timeline") or nil,
+    local timeline = setmetatable({
+        scope_name = tostring(name or "monster_timeline"),
+        scope = nil,
         scheduler_timer = nil,
         initial_spawn_timer = nil,
         initial_spawn_index = 1,
     }, Timeline)
+    if lifecycle ~= nil and lifecycle.is_active() then
+        timeline.scope = lifecycle.acquire(timeline.scope_name, function()
+            timeline.scheduler_timer = nil
+            timeline.initial_spawn_timer = nil
+            timeline.initial_spawn_index = 1
+        end)
+    elseif resource_api ~= nil then
+        timeline.scope = resource_api.scope(timeline.scope_name)
+    end
+    return timeline
 end
 
 ---@param interval number
@@ -91,6 +103,13 @@ function Timeline:stop_initial_batches()
 end
 
 function Timeline:stop()
+    if lifecycle ~= nil and lifecycle.release(self.scope_name) then
+        self.scope = nil
+        self.scheduler_timer = nil
+        self.initial_spawn_timer = nil
+        self.initial_spawn_index = 1
+        return
+    end
     self:stop_initial_batches()
     cancel_timer(self, "scheduler_timer")
     if self.scope ~= nil then
@@ -99,4 +118,5 @@ function Timeline:stop()
     end
 end
 
+JiuDou.publish("gameplay.monster.timeline", module)
 return module

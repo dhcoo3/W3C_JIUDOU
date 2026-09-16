@@ -267,6 +267,19 @@ function Write-SlkModule {
     }
     [System.IO.File]::WriteAllText($Path, [string]::Join([Environment]::NewLine, $lines), [System.Text.UTF8Encoding]::new($false))
 }
+function Normalize-MigratedAssetPaths {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if ([System.IO.Path]::GetExtension($Path).ToLowerInvariant() -ne '.lua') {
+        return
+    }
+    $content = [System.IO.File]::ReadAllText($Path)
+    $updated = $content.Replace('ui\\selectHero\\skills\\', 'war3mapImage\\selectHero\\skills\\')
+    $updated = $updated.Replace('ui/selectHero/skills/', 'war3mapImage/selectHero/skills/')
+    if ($updated -ne $content) {
+        [System.IO.File]::WriteAllText($Path, $updated, [System.Text.UTF8Encoding]::new($false))
+    }
+}
 function Get-MonsterUnitRawcodes {
     param([Parameter(Mandatory = $true)][System.Collections.IDictionary]$Units)
 
@@ -1651,8 +1664,8 @@ function Apply-RoguelikeObjectOverrides {
     $AbilityTable.Sections['A0E3']['Ubertip'] = '普通攻击积攒魂魄，最多 5 层；6 秒未攻击则消退。满层后的下一次攻击触发强化斩击。当前层数显示在技能图标旁，并可在 Buff 栏看到状态图标。'
     $AbilityTable.Sections['A0E3']['Researchtip'] = '学习霜之哀伤·饥渴(|cffffcc00E|r) - [等级 %d]'
     $AbilityTable.Sections['A0E3']['Researchubertip'] = '普通攻击积攒魂魄，最多 5 层；6 秒未攻击则消退。满层后的下一次攻击触发强化斩击。'
-    $AbilityTable.Sections['A0E3']['Art'] = 'ui\selectHero\skills\a0e3.blp'
-    $AbilityTable.Sections['A0E3']['ResearchArt'] = 'ui\selectHero\skills\a0e3.blp'
+    $AbilityTable.Sections['A0E3']['Art'] = 'war3mapImage\selectHero\skills\a0e3.blp'
+    $AbilityTable.Sections['A0E3']['ResearchArt'] = 'war3mapImage\selectHero\skills\a0e3.blp'
     $AbilityTable.Sections['R0W3'] = [ordered]@{
         _parent = 'AOae'
         Name = '齐天战意状态'
@@ -1708,7 +1721,7 @@ function Apply-RoguelikeObjectOverrides {
         DataE = @(0, 0)
         DataF = @('roar', 'roar')
         Order = 'roar'
-        Art = 'ui\selectHero\skills\a0e4.blp'
+        Art = 'war3mapImage\selectHero\skills\a0e4.blp'
     }
     $AbilityTable.Sections['R0H1'] = [ordered]@{
         _parent = 'ACcr'
@@ -2452,6 +2465,8 @@ try {
             $stagedOutputs.Add([pscustomobject]@{ Source = $sourcePath; Destination = Join-Path $slkDirectory $definition.Name })
         }
         foreach ($output in $stagedOutputs) {
+
+            Normalize-MigratedAssetPaths $output.Source
             if (Test-Path -LiteralPath $output.Destination) {
                 $backupPath = Join-Path $stagingDirectory (([System.IO.Path]::GetFileName($output.Destination)) + '.' + [guid]::NewGuid().ToString('N') + '.backup')
                 [System.IO.File]::Replace($output.Source, $output.Destination, $backupPath)

@@ -1,14 +1,17 @@
 --- 自动技能和战斗事件分发器。
 --- 首版只使用定时、攻击、攻击命中和击杀事件，不依赖不稳定的受伤事件。
-local jass = require "jass.common"
-local config = require "config.equipment"
-local instance = require "equipment.instance"
-local passive = require "equipment.passive"
-local combo = require "equipment.combo"
-local skill_damage = require "combat.skill_damage"
-local recovery = require "combat.recovery"
-local state_store = require "rogue.state"
-local damage_service = require "combat.damage"
+local jass = J.Common
+local config = JiuDou.config.equipment
+local instance = JiuDou.module("gameplay.equipment.instance")
+local passive = JiuDou.module("gameplay.equipment.passive")
+local combo = JiuDou.module("gameplay.equipment.combo")
+local skill_damage = JiuDou.module("gameplay.combat.skill_damage")
+local recovery = JiuDou.module("gameplay.combat.recovery")
+local state_store = JiuDou.module("gameplay.rogue.state")
+local damage_service = JiuDou.module("gameplay.combat.damage")
+local lifecycle = JiuDou.core and JiuDou.core.lifecycle
+local resource_api = JiuDou.core and JiuDou.core.resource
+local timer_service = JiuDou.core and JiuDou.core.timer
 
 local module = {}
 local heroes = {}
@@ -19,6 +22,7 @@ local death_trigger = nil
 local now = 0
 local event_sequence = 0
 local warned_damage = false
+local runtime_scope = nil
 
 local TICK = 0.25
 local NEUTRAL_HOSTILE_PLAYER_ID = 12
@@ -150,7 +154,7 @@ local function trigger_equipment_event(hero, event_type, target)
                 local cooldown_key = "auto:" .. tostring(equipment.uid)
                 if now >= (state.cooldowns[cooldown_key] or 0) then
                     local roll_key = current_event * 100000 + equipment.uid
-                    local generator = require "equipment.generator"
+                    local generator = JiuDou.module("gameplay.equipment.generator")
                     if generator.roll_percent(roll_key, row.chance) then
                         execute(hero, equipment, row, target)
                         state.cooldowns[cooldown_key] = now + math.max(0, tonumber(row.internalCooldown) or 0)
@@ -181,7 +185,7 @@ local function process_interval()
                     local row = config.autoSkills[equipment.autoSkillId]
                     if row ~= nil and row.eventType == "on_interval"
                         and now >= (state.cooldowns["auto:" .. tostring(equipment.uid)] or 0) then
-                        local generator = require "equipment.generator"
+                        local generator = JiuDou.module("gameplay.equipment.generator")
                         if generator.roll_percent(current_event * 100000 + equipment.uid, row.chance) then
                             execute(hero, equipment, row, nil)
                             state.cooldowns["auto:" .. tostring(equipment.uid)] = now + math.max(TICK, tonumber(row.interval) or 0)
@@ -200,9 +204,13 @@ local function process_interval()
     end
 end
 
-local function register_events()
+local function register_events(scope)
     attack_trigger = jass.CreateTrigger()
     death_trigger = jass.CreateTrigger()
+    if scope ~= nil then
+        resource_api.trigger(scope, attack_trigger)
+        resource_api.trigger(scope, death_trigger)
+    end
     for player_id = 0, 15 do
         local player_handle = jass.Player(player_id)
         jass.TriggerRegisterPlayerUnitEvent(attack_trigger, player_handle, jass.EVENT_PLAYER_UNIT_ATTACKED, nil)
@@ -248,10 +256,22 @@ function module.start(hero_results)
             state_for(result.unit)
         end
     end
-    register_events()
-    interval_timer = jass.CreateTimer()
-    jass.TimerStart(interval_timer, TICK, true, process_interval)
+    runtime_scope = lifecycle and lifecycle.acquire("equipment.auto_skill", function()
+        heroes, states = {}, {}
+        interval_timer, attack_trigger, death_trigger = nil, nil, nil
+        now, event_sequence, warned_damage = 0, 0, false
+    end) or nil
+    register_events(runtime_scope)
+    if timer_service ~= nil then
+        interval_timer = timer_service.every(TICK, process_interval, runtime_scope)
+    end
     return true
 end
 
+function module.stop()
+    if lifecycle ~= nil and lifecycle.release("equipment.auto_skill") then return true end
+    return false
+end
+
+JiuDou.publish("gameplay.equipment.auto_skill", module)
 return module

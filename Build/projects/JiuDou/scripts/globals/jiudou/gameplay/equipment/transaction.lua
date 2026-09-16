@@ -1,8 +1,8 @@
 --- 装备背包事务。
 --- 合成结果必须经过“校验材料 → 移除材料 → 写入结果 → 失败回滚”的单一入口。
-local jass = require "jass.common"
-local config = require "config.items"
-local instance = require "equipment.instance"
+local jass = J.Common
+local config = JiuDou.config.items
+local instance = JiuDou.module("gameplay.equipment.instance")
 
 local module = {}
 
@@ -134,4 +134,5 @@ function module.apply_merge_result(carrier, first_uid, second_uid, result)
     return true, nil
 end
 
+JiuDou.publish("gameplay.equipment.transaction", module)
 return module

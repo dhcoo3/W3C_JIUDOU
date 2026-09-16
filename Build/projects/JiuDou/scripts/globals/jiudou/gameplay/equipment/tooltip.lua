@@ -1,11 +1,15 @@
 --- 装备物品栏 Tooltip。
 --- 优先监听 DzFrameGetItemBarButton(0..5) 返回的原生物品栏按钮，
 --- 再回退到默认 Frame 名称；用本地 DzFrame 覆盖原生固定 Tooltip，显示随机装备实例的实际词条。
-local jass = require "jass.common"
-local config = require "config.equipment"
-local combo = require "equipment.combo"
-local instance = require "equipment.instance"
-local frame = require "platform.frame"
+local jass = J.Common
+local config = JiuDou.config.equipment
+local combo = JiuDou.module("gameplay.equipment.combo")
+local instance = JiuDou.module("gameplay.equipment.instance")
+local frame = JiuDou.module("platform.frame")
+local lifecycle = JiuDou.core and JiuDou.core.lifecycle
+local timer_service = JiuDou.core and JiuDou.core.timer
+
+local ui = UIKit("jiudou_equipment_tooltip")
 
 local module = {}
 
@@ -17,9 +21,6 @@ local NATIVE_TOOLTIP_NAMES = {
     "ItemTipFrame",
 }
 
-local tooltip_background = nil
-local tooltip_text = nil
-local tooltip_anchor = nil
 local hide_timer = nil
 local install_timer = nil
 local install_attempts = 0
@@ -27,6 +28,7 @@ local installed = false
 local warned = false
 local native_tooltip_hidden = false
 local hover_callbacks = {}
+local runtime_scope = nil
 
 local function get_local_player_id()
     if type(jass.GetLocalPlayer) ~= "function" then
@@ -69,40 +71,6 @@ local function set_native_tooltip_hidden(hidden)
 end
 
 local function ensure_frames()
-    if tooltip_text ~= nil and tooltip_background ~= nil then
-        return true
-    end
-    if not frame.is_available() then
-        if not warned then
-            warned = true
-            print("装备 Tooltip 不可用：当前运行时缺少 DzFrame 接口")
-        end
-        return false
-    end
-    local game_ui = frame.get_game_ui()
-    if game_ui == nil then
-        return false
-    end
-    tooltip_anchor = find_native_tooltip() or game_ui
-    tooltip_background = frame.create(
-        "BACKDROP",
-        "JiuDouEquipmentTooltipBackground",
-        game_ui,
-        BACKDROP_TEMPLATE,
-        0
-    )
-    tooltip_text = frame.create(
-        "TEXT",
-        "JiuDouEquipmentTooltipText",
-        game_ui,
-        TEXT_TEMPLATE,
-        0
-    )
-    if tooltip_background == nil or tooltip_text == nil then
-        return false
-    end
-    frame.set_visible(tooltip_background, false)
-    frame.set_visible(tooltip_text, false)
     return true
 end
 
@@ -110,8 +78,7 @@ local function stop_hide_timer()
     if hide_timer == nil then
         return
     end
-    jass.PauseTimer(hide_timer)
-    jass.DestroyTimer(hide_timer)
+    if timer_service ~= nil then timer_service.cancel(hide_timer, runtime_scope) end
     hide_timer = nil
 end
 
@@ -125,12 +92,7 @@ end
 
 local function hide_current()
     stop_hide_timer()
-    if tooltip_background ~= nil then
-        frame.set_visible(tooltip_background, false)
-    end
-    if tooltip_text ~= nil then
-        frame.set_visible(tooltip_text, false)
-    end
+    ui:hide()
     set_native_tooltip_hidden(false)
 end
 
@@ -141,18 +103,14 @@ local function show_text(text, duration)
     stop_hide_timer()
     local line_count = count_lines(text)
     local height = math.min(0.34, 0.055 + line_count * 0.023)
-    local anchor = tooltip_anchor or frame.get_game_ui()
-    frame.set_size(tooltip_background, 0.47, height)
-    frame.set_size(tooltip_text, 0.43, height - 0.018)
-    frame.set_point(tooltip_background, frame.POINT_CENTER, anchor, frame.POINT_CENTER, 0.0, 0.0)
-    frame.set_point(tooltip_text, frame.POINT_CENTER, anchor, frame.POINT_CENTER, 0.0, 0.0)
-    frame.set_text(tooltip_text, text)
+    ui:set_text(text, height)
     set_native_tooltip_hidden(true)
-    frame.set_visible(tooltip_background, true)
-    frame.set_visible(tooltip_text, true)
+    if not ui:show() then
+        set_native_tooltip_hidden(false)
+        return false
+    end
     if duration ~= nil and duration > 0 then
-        hide_timer = jass.CreateTimer()
-        jass.TimerStart(hide_timer, duration, false, hide_current)
+        hide_timer = timer_service and timer_service.after(duration, hide_current, runtime_scope) or nil
     end
     return true
 end
@@ -265,6 +223,11 @@ end
 --- 启动物品栏 Tooltip 悬停接入。
 ---@return boolean started 是否已成功接入
 function module.start()
+    runtime_scope = lifecycle and lifecycle.acquire("equipment.tooltip", function()
+        hide_timer, install_timer, installed = nil, nil, false
+        hover_callbacks = {}
+        hide_current()
+    end) or runtime_scope
     if installed then
         return true
     end
@@ -273,20 +236,22 @@ function module.start()
     end
     if install_timer == nil and type(jass.CreateTimer) == "function" then
         install_attempts = 0
-        install_timer = jass.CreateTimer()
-        jass.TimerStart(install_timer, 1.0, true, function()
+        install_timer = timer_service and timer_service.every(1.0, function()
             install_attempts = install_attempts + 1
             if install_inventory_hooks() or install_attempts >= 10 then
                 if not installed and install_attempts >= 10 then
                     print("装备 Tooltip 接入失败：未找到原生物品栏按钮，请检查 DzFrameGetItemBarButton 或 InventoryButton_0 至 InventoryButton_5")
                 end
-                jass.PauseTimer(install_timer)
-                jass.DestroyTimer(install_timer)
+                timer_service.cancel(install_timer, runtime_scope)
                 install_timer = nil
             end
-        end)
+        end, runtime_scope) or nil
     end
     return false
+end
+
+function module.stop()
+    return lifecycle ~= nil and lifecycle.release("equipment.tooltip") or false
 end
 
 --- 手动隐藏装备 Tooltip。
@@ -294,4 +259,5 @@ function module.hide()
     hide_current()
 end
 
+JiuDou.publish("gameplay.equipment.tooltip", module)
 return module

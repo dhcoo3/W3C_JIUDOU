@@ -1,7 +1,7 @@
 --- 金币同步适配层。
 --- 房主广播已经结算的原生金币绝对余额，所有客户端执行相同的 SetPlayerState。
-local jass = require "jass.common"
-local platform_sync = require "platform.sync"
+local jass = J.Common
+local platform_sync = JiuDou.module("platform.sync")
 
 local module = {}
 local PREFIX = "JiuDouGold"
@@ -53,6 +53,12 @@ function module.start(on_message)
     return true
 end
 
+function module.stop()
+    callback = nil
+    if trigger ~= nil and type(jass.DestroyTrigger) == "function" then jass.DestroyTrigger(trigger) end
+    trigger = nil
+end
+
 function module.is_available()
     return platform_sync.is_available()
 end
@@ -89,4 +95,5 @@ end
 
 module.split = split
 
+JiuDou.publish("gameplay.gold.sync", module)
 return module

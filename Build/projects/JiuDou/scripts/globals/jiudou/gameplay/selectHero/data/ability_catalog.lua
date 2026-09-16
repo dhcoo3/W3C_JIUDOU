@@ -1,11 +1,10 @@
 --- 英雄技能展示数据层。
 --- 负责把自动生成的技能配置转换为选将界面可直接展示的资料。
-local abilities = require "config.abilities"
-local roguelike = require "config.roguelike"
+local abilities = JiuDou.config.abilities
+local roguelike = JiuDou.config.roguelike
 
 local module = {}
 
-local SKILL_ROOT = "ui\\selectHero\\skills\\"
 
 ---@class HeroAbilityView
 ---@field rawcode string 技能 Rawcode
@@ -14,7 +13,6 @@ local SKILL_ROOT = "ui\\selectHero\\skills\\"
 ---@field damage string 伤害或效果说明
 ---@field range string 技能范围说明
 ---@field cooldown string 冷却时间说明
----@field icon string 技能图标贴图路径
 
 --- 仅保存无法从通用对象字段可靠推断的界面语义。
 ---@class HeroAbilityPresentation
@@ -143,7 +141,6 @@ local function build_ability(rawcode)
         damage = formula_damage(rawcode) or presentation.damage or format_values(ability.DataA),
         range = presentation.range or format_default_range(ability),
         cooldown = presentation.cooldown or format_default_cooldown(ability),
-        icon = SKILL_ROOT .. string.lower(rawcode) .. ".blp",
     }
 end
 
@@ -157,4 +154,5 @@ function module.get(rawcode)
     return ability_by_rawcode[rawcode]
 end
 
+JiuDou.publish("gameplay.selectHero.data.ability_catalog", module)
 return module

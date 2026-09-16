@@ -1,11 +1,14 @@
 --- 装备拾取、丢弃和初始物品栏扫描。
 --- 原生物品栏仍由 Warcraft 管理，本模块只维护实例映射和生效回调。
-local jass = require "jass.common"
-local config = require "config.items"
-local generator = require "equipment.generator"
-local instance = require "equipment.instance"
+local jass = J.Common
+local config = JiuDou.config.items
+local generator = JiuDou.module("gameplay.equipment.generator")
+local instance = JiuDou.module("gameplay.equipment.instance")
 
 local module = {}
+local lifecycle = JiuDou.core and JiuDou.core.lifecycle
+local resource_api = JiuDou.core and JiuDou.core.resource
+local runtime_scope = nil
 local pickup_trigger = nil
 local drop_trigger = nil
 local allow_local_fallback = false
@@ -228,6 +231,10 @@ end
 local function register_for_players(hero_results)
     pickup_trigger = jass.CreateTrigger()
     drop_trigger = jass.CreateTrigger()
+    if runtime_scope ~= nil then
+        resource_api.trigger(runtime_scope, pickup_trigger)
+        resource_api.trigger(runtime_scope, drop_trigger)
+    end
     local seen = {}
     for _, result in ipairs(hero_results or {}) do
         if not seen[result.playerId] then
@@ -246,6 +253,10 @@ end
 ---@param fallback boolean 是否允许单机本地创建未绑定实例
 ---@param changed fun(hero:unit, equipment:EquipmentInstance, reason:string) 生效变化回调
 function module.start(hero_results, fallback, changed)
+    runtime_scope = lifecycle and lifecycle.acquire("equipment.pickup", function()
+        pickup_trigger, drop_trigger, on_changed = nil, nil, nil
+        allow_local_fallback = false
+    end) or nil
     allow_local_fallback = fallback == true
     on_changed = changed
     for _, result in ipairs(hero_results or {}) do
@@ -260,6 +271,10 @@ function module.start(hero_results, fallback, changed)
         end
     end
     return true
+end
+
+function module.stop()
+    return lifecycle ~= nil and lifecycle.release("equipment.pickup") or false
 end
 
 --- 登记英雄的独立物品栏单位，并扫描其已有物品建立装备实例映射。
@@ -277,4 +292,5 @@ end
 module.handle_pickup = on_pickup
 module.handle_drop = on_drop
 
+JiuDou.publish("gameplay.equipment.pickup", module)
 return module

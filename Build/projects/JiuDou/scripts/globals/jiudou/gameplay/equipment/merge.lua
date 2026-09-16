@@ -1,12 +1,15 @@
 --- 第 1、2 格装备合成。
 --- 本地快捷键只发送请求；房主重新读取物品栏并广播完整合成结果。
-local jass = require "jass.common"
-local input = require "platform.input"
-local instance = require "equipment.instance"
-local generator = require "equipment.generator"
-local transaction = require "equipment.transaction"
+local jass = J.Common
+local input = JiuDou.module("platform.input")
+local instance = JiuDou.module("gameplay.equipment.instance")
+local generator = JiuDou.module("gameplay.equipment.generator")
+local transaction = JiuDou.module("gameplay.equipment.transaction")
 
 local module = {}
+local lifecycle = JiuDou.core and JiuDou.core.lifecycle
+local resource_api = JiuDou.core and JiuDou.core.resource
+local runtime_scope = nil
 local sync_module = nil
 local on_changed = nil
 local on_failure = nil
@@ -212,6 +215,7 @@ local function register_hotkey()
         return false
     end
     key_trigger = jass.CreateTrigger()
+    if runtime_scope ~= nil then resource_api.trigger(runtime_scope, key_trigger) end
 
     -- F2 的 JAPI 按键码为 113。按键只在本地捕获，再发送合成同步请求。
     local callback = function()
@@ -239,6 +243,10 @@ end
 ---@param changed fun(hero:unit, equipment:EquipmentInstance, reason:string) 生效回调
 ---@param failure fun(playerId:integer, reason:string) 失败回调
 function module.start(heroes, sync_adapter, allow, changed, failure)
+    runtime_scope = lifecycle and lifecycle.acquire("equipment.merge", function()
+        key_trigger, sync_module = nil, nil
+        hero_by_player, local_hero = {}, nil
+    end) or nil
     sync_module = sync_adapter
     enabled = allow ~= false
     on_changed = changed
@@ -249,8 +257,13 @@ function module.start(heroes, sync_adapter, allow, changed, failure)
     return enabled
 end
 
+function module.stop()
+    return lifecycle ~= nil and lifecycle.release("equipment.merge") or false
+end
+
 module.is_host = function()
     return sync_module ~= nil and sync_module.is_host()
 end
 
+JiuDou.publish("gameplay.equipment.merge", module)
 return module

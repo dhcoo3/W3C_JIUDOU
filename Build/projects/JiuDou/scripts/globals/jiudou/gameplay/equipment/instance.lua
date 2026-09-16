@@ -1,6 +1,6 @@
 --- 装备实例和物品栏映射。
 --- 装备的随机结果只在掉落或合成同步结果中确定，拾取阶段不重新随机。
-local jass = require "jass.common"
+local jass = J.Common
 
 local module = {}
 
@@ -353,4 +353,5 @@ function module.get_all()
     return by_uid
 end
 
+JiuDou.publish("gameplay.equipment.instance", module)
 return module

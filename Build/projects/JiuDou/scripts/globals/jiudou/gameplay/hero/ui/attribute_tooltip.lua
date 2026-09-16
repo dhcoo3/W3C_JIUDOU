@@ -1,15 +1,19 @@
 --- 英雄三维属性合并 Tooltip。
 --- 负责接管原生英雄属性信息区的旧提示，并把三项属性的项目规则显示在同一个 Tips 中。
 --- 运行时只在本地玩家界面执行；属性数值仍由 hero.stats 统一计算。
-local jass = require "jass.common"
-local frame = require "platform.frame"
-local hero_stats = require "hero.stats"
+local jass = J.Common
+local frame = JiuDou.module("platform.frame")
+local hero_stats = JiuDou.module("gameplay.hero.stats")
 local events = JiuDou.core and JiuDou.core.events
+local lifecycle = JiuDou.core and JiuDou.core.lifecycle
+local timer_service = JiuDou.core and JiuDou.core.timer
+
+local ui = UIKit("jiudou_hero_attribute_tooltip")
 
 local module = {}
+local runtime_scope = nil
+local stats_event_token = nil
 
-local BACKDROP_TEMPLATE = "EscMenuControlBackdropTemplate"
-local TEXT_TEMPLATE = "EscMenuLabelTextTemplate"
 local HERO_INFO_CONTEXT = 6
 local RETRY_INTERVAL = 0.5
 local MAX_INSTALL_ATTEMPTS = 20
@@ -45,12 +49,8 @@ local ATTRIBUTE_VALUE_NAMES = {
 }
 
 local active_hero = nil
-local tooltip_root = nil
-local tooltip_text = nil
-local fallback_anchor = nil
 local fallback_visible = false
 local native_tooltip_hidden = false
-local frame_id = 0
 local hooked_frames = {}
 local target_frames = {}
 local install_timer = nil
@@ -66,11 +66,6 @@ local function get_local_player_id()
         return nil
     end
     return jass.GetPlayerId(jass.GetLocalPlayer())
-end
-
-local function create_frame(frame_type, suffix, parent, template)
-    frame_id = frame_id + 1
-    return frame.create(frame_type, "JiuDouHeroAttributeTooltip" .. suffix .. frame_id, parent, template, frame_id)
 end
 
 local function find_native_tooltip()
@@ -128,33 +123,6 @@ function module.build_description()
 end
 
 local function ensure_frames()
-    if tooltip_root ~= nil and tooltip_text ~= nil then
-        return true
-    end
-    if not frame.is_available() then
-        if not warned then
-            warned = true
-            print("属性 Tooltip 不可用：当前运行时缺少 DzFrame 接口")
-        end
-        return false
-    end
-    local game_ui = frame.get_game_ui()
-    if game_ui == nil then
-        return false
-    end
-
-    -- 使用与装备 Tooltip 相同的稳定模板组合。不要创建空模板 SIMPLEFRAME：
-    -- 部分 1.27 KKWE 会在该组合上直接抛出 JASS 调用异常。
-    tooltip_root = create_frame("BACKDROP", "Root", game_ui, BACKDROP_TEMPLATE)
-    tooltip_text = create_frame("TEXT", "Text", game_ui, TEXT_TEMPLATE)
-    if tooltip_root == nil or tooltip_text == nil then
-        tooltip_root = nil
-        tooltip_text = nil
-        return false
-    end
-    frame.set_point(tooltip_text, frame.POINT_CENTER, tooltip_root, frame.POINT_CENTER, 0.0, 0.0)
-    frame.set_visible(tooltip_root, false)
-    frame.set_visible(tooltip_text, false)
     return true
 end
 
@@ -190,21 +158,14 @@ local function update_text()
     local text = module.build_description()
     local line_count = count_lines(text)
     local height = math.min(0.48, 0.040 + line_count * 0.020)
-    frame.set_size(tooltip_root, 0.47, height)
-    frame.set_size(tooltip_text, 0.43, math.max(0.02, height - 0.018))
-    frame.set_text(tooltip_text, text)
+    ui:set_text(text, height)
     update_native_attribute_values()
     return true
 end
 
 local function hide_fallback()
     fallback_visible = false
-    if tooltip_root ~= nil then
-        frame.set_visible(tooltip_root, false)
-    end
-    if tooltip_text ~= nil then
-        frame.set_visible(tooltip_text, false)
-    end
+    ui:hide()
     set_native_tooltip_hidden(false)
 end
 
@@ -212,19 +173,11 @@ local function show_fallback()
     if not update_text() then
         return false
     end
-    local current_native_tooltip = find_native_tooltip()
-    if current_native_tooltip ~= nil then
-        fallback_anchor = current_native_tooltip
-    end
-    local anchor = fallback_anchor or frame.get_game_ui()
-    if anchor == nil then
+    set_native_tooltip_hidden(true)
+    if not ui:show() then
+        set_native_tooltip_hidden(false)
         return false
     end
-    frame.set_point(tooltip_root, frame.POINT_CENTER, anchor, frame.POINT_CENTER, 0.0, 0.0)
-    frame.set_point(tooltip_text, frame.POINT_CENTER, tooltip_root, frame.POINT_CENTER, 0.0, 0.0)
-    set_native_tooltip_hidden(true)
-    frame.set_visible(tooltip_root, true)
-    frame.set_visible(tooltip_text, true)
     fallback_visible = true
     return true
 end
@@ -302,8 +255,7 @@ local function start_hover_timer()
         or type(jass.TimerStart) ~= "function" then
         return
     end
-    hover_timer = jass.CreateTimer()
-    jass.TimerStart(hover_timer, HOVER_POLL_INTERVAL, true, poll_hover)
+    hover_timer = timer_service and timer_service.every(HOVER_POLL_INTERVAL, poll_hover, runtime_scope) or nil
 end
 
 local function install_hooks()
@@ -327,8 +279,7 @@ local function stop_install_timer()
     if install_timer == nil then
         return
     end
-    jass.PauseTimer(install_timer)
-    jass.DestroyTimer(install_timer)
+    if timer_service ~= nil then timer_service.cancel(install_timer, runtime_scope) end
     install_timer = nil
 end
 
@@ -337,15 +288,14 @@ local function schedule_install()
         return
     end
     install_attempts = 0
-    install_timer = jass.CreateTimer()
-    jass.TimerStart(install_timer, RETRY_INTERVAL, true, function()
+    install_timer = timer_service and timer_service.every(RETRY_INTERVAL, function()
         install_attempts = install_attempts + 1
         install_hooks()
         if install_attempts >= MAX_INSTALL_ATTEMPTS then
             if not installed then print("英雄属性 Tooltip 接入失败：未找到可用的英雄属性信息区") end
             stop_install_timer()
         end
-    end)
+    end, runtime_scope) or nil
 end
 
 --- 启动英雄属性合并 Tooltip。
@@ -368,6 +318,12 @@ function module.start(hero_results)
     if active_hero == nil or not frame.is_available() then
         return false
     end
+    runtime_scope = lifecycle and lifecycle.acquire("hero.ui.attribute_tooltip", function()
+        if stats_event_token ~= nil and events ~= nil then events.off(stats_event_token) end
+        stats_event_token = nil
+        active_hero, hover_timer, install_timer, started = nil, nil, nil, false
+        hide_fallback()
+    end) or nil
 
     started = true
     local on_stats_changed = function(hero)
@@ -379,7 +335,7 @@ function module.start(hero_results)
         end
     end
     if events ~= nil and type(events.on) == "function" then
-        events.on("hero.stats_changed", function(data)
+        stats_event_token = events.on("hero.stats_changed", function(data)
             if data ~= nil then
                 on_stats_changed(data.hero)
             end
@@ -393,10 +349,15 @@ function module.start(hero_results)
     return true
 end
 
+function module.stop()
+    return lifecycle ~= nil and lifecycle.release("hero.ui.attribute_tooltip") or false
+end
+
 --- 手动隐藏当前自定义属性 Tips。
 ---@return nil
 function module.hide()
     hide_fallback()
 end
 
+JiuDou.publish("gameplay.hero.ui.attribute_tooltip", module)
 return module

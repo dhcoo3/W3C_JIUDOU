@@ -208,7 +208,7 @@ JiuDou.config.buffs = {
         ["Buffubertip"] = "普通攻击积攒的魂魄状态。最多 5 层；满层后的下一次攻击会触发强化斩击。具体层数见技能图标旁计数。",
         ["race"] = "other",
         ["TargetArt"] = "",
-        ["Buffart"] = "ui\\selectHero\\skills\\a0e3.blp",
+        ["Buffart"] = "war3mapImage\\selectHero\\skills\\a0e3.blp",
     },
 }
 return JiuDou.config.buffs

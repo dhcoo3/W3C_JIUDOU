@@ -1,22 +1,27 @@
 --- 装备系统总入口。
 --- 统一接入配置、掉落、拾取、属性、自动技能、套装、合成同步和本地详情提示。
-local jass = require "jass.common"
-local sync = require "equipment.sync"
-local generator = require "equipment.generator"
-local instance = require "equipment.instance"
-local pickup = require "equipment.pickup"
-local drop = require "equipment.drop"
-local merge = require "equipment.merge"
-local stats = require "equipment.stats"
-local auto_skill = require "equipment.auto_skill"
-local tooltip = require "equipment.tooltip"
-local courier = require "courier.main"
+local jass = J.Common
+local sync = JiuDou.module("gameplay.equipment.sync")
+local generator = JiuDou.module("gameplay.equipment.generator")
+local instance = JiuDou.module("gameplay.equipment.instance")
+local pickup = JiuDou.module("gameplay.equipment.pickup")
+local drop = JiuDou.module("gameplay.equipment.drop")
+local merge = JiuDou.module("gameplay.equipment.merge")
+local stats = JiuDou.module("gameplay.equipment.stats")
+local auto_skill = JiuDou.module("gameplay.equipment.auto_skill")
+local tooltip = JiuDou.module("gameplay.equipment.tooltip")
+local courier = JiuDou.module("gameplay.courier.main")
+local lifecycle = JiuDou.core and JiuDou.core.lifecycle
 
 local module = {}
 local started = false
 local critical_enabled = false
 local fallback_allowed = false
 local next_public_uid = 8000000
+
+local function stop_child(child)
+    if type(child) == "table" and type(child.stop) == "function" then child.stop() end
+end
 
 local function rawcode_to_id(rawcode)
     local a, b, c, d = string.byte(rawcode or "", 1, 4)
@@ -88,6 +93,18 @@ function module.start(hero_results, session_seed)
         return false
     end
     started = true
+    if lifecycle ~= nil then
+        lifecycle.acquire("equipment.main", function()
+            stop_child(auto_skill)
+            stop_child(merge)
+            stop_child(drop)
+            stop_child(pickup)
+            stop_child(tooltip)
+            stop_child(courier)
+            sync.stop()
+            started, critical_enabled, fallback_allowed = false, false, false
+        end)
+    end
     hero_results = hero_results or {}
     generator.configure(session_seed or 13579)
     local active_player_count = count_active_players(hero_results)
@@ -118,6 +135,10 @@ function module.start(hero_results, session_seed)
     auto_skill.start(hero_results)
     print(string.format("装备系统已启动：玩家=%d，同步=%s，合成快捷键=F2", active_player_count, tostring(sync_available)))
     return true
+end
+
+function module.stop()
+    return lifecycle ~= nil and lifecycle.release("equipment.main") or false
 end
 
 --- 创建一个装备实例，供掉落、合成或测试工具调用。
@@ -223,4 +244,5 @@ function module.get_description(equipment, hero)
     return tooltip.build_description(equipment, hero)
 end
 
+JiuDou.publish("gameplay.equipment.main", module)
 return module

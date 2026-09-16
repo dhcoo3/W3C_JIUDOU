@@ -1,16 +1,19 @@
 --- PVE 英雄经验系统。
 --- 负责自定义 25 级经验、怪物经验结算、经验加成与多人同步。
-local jass = require "jass.common"
-local config = require "config.experience"
-local units = require "config.units"
-local monster_config = require "monster.config"
-local formula = require "experience.formula"
-local sync = require "experience.sync"
-local damage_service = require "combat.damage"
-local hero_stats = require "hero.stats"
+local jass = J.Common
+local config = JiuDou.config.experience
+local units = JiuDou.config.units
+local monster_config = JiuDou.module("gameplay.monster.config")
+local formula = JiuDou.module("gameplay.experience.formula")
+local sync = JiuDou.module("gameplay.experience.sync")
+local damage_service = JiuDou.module("gameplay.combat.damage")
+local hero_stats = JiuDou.module("gameplay.hero.stats")
 local events = JiuDou.core and JiuDou.core.events
 
 local module = {}
+local lifecycle = JiuDou.core and JiuDou.core.lifecycle
+local resource_api = JiuDou.core and JiuDou.core.resource
+local runtime_scope = nil
 
 local HOST_PLAYER_ID = 0
 local MAX_PLAYER_ID = 11
@@ -343,6 +346,10 @@ end
 ---@return boolean started_now 是否启动成功
 function module.start(selection, hero_results)
     if started then return false end
+    runtime_scope = lifecycle and lifecycle.acquire("experience.main", function()
+        started, sync_available, death_trigger = false, false, nil
+        states_by_player, states_by_hero, hero_players, active_players = {}, {}, {}, {}
+    end) or nil
     local difficulty, message = monster_config.create_difficulty(selection)
     if difficulty == nil then
         print("经验系统启动失败：" .. tostring(message))
@@ -396,6 +403,7 @@ function module.start(selection, hero_results)
         print("经验系统启动失败：触发器创建失败")
         return false
     end
+    if runtime_scope ~= nil then resource_api.trigger(runtime_scope, death_trigger) end
     jass.TriggerRegisterPlayerUnitEvent(
         death_trigger,
         jass.Player(NEUTRAL_HOSTILE_PLAYER_ID),
@@ -413,6 +421,12 @@ function module.start(selection, hero_results)
     return true
 end
 
+function module.stop()
+    sync.stop()
+    return lifecycle ~= nil and lifecycle.release("experience.main") or false
+end
+
 function module.is_started() return started end
 
+JiuDou.publish("gameplay.experience.main", module)
 return module

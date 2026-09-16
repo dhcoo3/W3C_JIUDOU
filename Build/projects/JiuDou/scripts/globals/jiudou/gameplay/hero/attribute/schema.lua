@@ -51,4 +51,5 @@ function module.copy(values)
     return module.normalize(values)
 end
 
+JiuDou.publish("gameplay.hero.attribute.schema", module)
 return module

@@ -142,4 +142,5 @@ function M.decode(data)
     return selection, nil
 end
 
+JiuDou.publish("gameplay.runMode.config", M)
 return M

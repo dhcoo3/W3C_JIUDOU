@@ -1,7 +1,7 @@
 --- 统一恢复公式。
 --- 固定恢复按持有者主属性计算；heal_percent 是最终最大生命百分比恢复，单独结算一次。
-local jass = require "jass.common"
-local hero_stats = require "hero.stats"
+local jass = J.Common
+local hero_stats = JiuDou.module("gameplay.hero.stats")
 
 local module = {}
 
@@ -76,4 +76,5 @@ function module.apply_percent(hero, percent)
     return actual ~= nil and actual > current + 0.001
 end
 
+JiuDou.publish("gameplay.combat.recovery", module)
 return module

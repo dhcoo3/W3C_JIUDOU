@@ -263,7 +263,7 @@ slk_ability({
         900,
         900,
     },
-    ["Art"] = "ui\\selectHero\\skills\\a0n1.blp",
+    ["Art"] = "war3mapImage\\selectHero\\skills\\a0n1.blp",
 })
 
 slk_ability({
@@ -336,7 +336,7 @@ slk_ability({
         "deathcoil",
     },
     ["Order"] = "deathcoil",
-    ["Art"] = "ui\\selectHero\\skills\\a0n2.blp",
+    ["Art"] = "war3mapImage\\selectHero\\skills\\a0n2.blp",
 })
 
 slk_ability({
@@ -398,7 +398,7 @@ slk_ability({
         "B0N2",
         "B0N2",
     },
-    ["Art"] = "ui\\selectHero\\skills\\a0n3.blp",
+    ["Art"] = "war3mapImage\\selectHero\\skills\\a0n3.blp",
 })
 
 slk_ability({
@@ -471,7 +471,7 @@ slk_ability({
         "carrionswarm",
     },
     ["Order"] = "carrionswarm",
-    ["Art"] = "ui\\selectHero\\skills\\a0n4.blp",
+    ["Art"] = "war3mapImage\\selectHero\\skills\\a0n4.blp",
 })
 
 slk_ability({
@@ -743,7 +743,7 @@ slk_ability({
         "deathcoil",
     },
     ["Order"] = "deathcoil",
-    ["Art"] = "ui\\selectHero\\skills\\a0e1.blp",
+    ["Art"] = "war3mapImage\\selectHero\\skills\\a0e1.blp",
 })
 
 slk_ability({
@@ -816,7 +816,7 @@ slk_ability({
         "berserk",
     },
     ["Order"] = "berserk",
-    ["Art"] = "ui\\selectHero\\skills\\a0e2.blp",
+    ["Art"] = "war3mapImage\\selectHero\\skills\\a0e2.blp",
 })
 
 slk_ability({
@@ -891,8 +891,8 @@ slk_ability({
         0,
         0,
     },
-    ["Art"] = "ui\\selectHero\\skills\\a0e3.blp",
-    ["ResearchArt"] = "ui\\selectHero\\skills\\a0e3.blp",
+    ["Art"] = "war3mapImage\\selectHero\\skills\\a0e3.blp",
+    ["ResearchArt"] = "war3mapImage\\selectHero\\skills\\a0e3.blp",
 })
 
 slk_ability({
@@ -955,7 +955,7 @@ slk_ability({
         "carrionswarm",
     },
     ["Order"] = "carrionswarm",
-    ["Art"] = "ui\\selectHero\\skills\\a0e4.blp",
+    ["Art"] = "war3mapImage\\selectHero\\skills\\a0e4.blp",
 })
 
 slk_ability({
@@ -2026,7 +2026,7 @@ slk_ability({
         "roar",
     },
     ["Order"] = "roar",
-    ["Art"] = "ui\\selectHero\\skills\\a0e4.blp",
+    ["Art"] = "war3mapImage\\selectHero\\skills\\a0e4.blp",
 })
 
 slk_ability({

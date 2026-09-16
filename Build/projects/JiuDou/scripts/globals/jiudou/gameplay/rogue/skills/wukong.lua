@@ -1,12 +1,16 @@
 --- 孙悟空技能 Lua 运行时。
 --- 所有客户端执行相同事件和确定性随机，不在 GetLocalPlayer 分支中修改游戏状态。
-local jass = require "jass.common"
-local config = require "rogue.config"
-local state_store = require "rogue.state"
-local skill_damage = require "combat.skill_damage"
-local damage_service = require "combat.damage"
+local jass = J.Common
+local config = JiuDou.module("gameplay.rogue.config")
+local state_store = JiuDou.module("gameplay.rogue.state")
+local skill_damage = JiuDou.module("gameplay.combat.skill_damage")
+local damage_service = JiuDou.module("gameplay.combat.damage")
 
 local module = {}
+local lifecycle = JiuDou.core and JiuDou.core.lifecycle
+local resource_api = JiuDou.core and JiuDou.core.resource
+local timer_service = JiuDou.core and JiuDou.core.timer
+local runtime_scope = nil
 local started = false
 local heroes = {}
 local combat_states = {}
@@ -243,6 +247,11 @@ local function register_events()
     spell_trigger = jass.CreateTrigger()
     attack_trigger = jass.CreateTrigger()
     death_trigger = jass.CreateTrigger()
+    if runtime_scope ~= nil then
+        resource_api.trigger(runtime_scope, spell_trigger)
+        resource_api.trigger(runtime_scope, attack_trigger)
+        resource_api.trigger(runtime_scope, death_trigger)
+    end
     for player_id = 0, 15 do
         local player = jass.Player(player_id)
         jass.TriggerRegisterPlayerUnitEvent(spell_trigger, player, jass.EVENT_PLAYER_UNIT_SPELL_EFFECT, nil)
@@ -277,8 +286,7 @@ local function register_events()
 end
 
 local function start_stack_timer()
-    stack_timer = jass.CreateTimer()
-    jass.TimerStart(stack_timer, 0.25, true, function()
+    stack_timer = timer_service and timer_service.every(0.25, function()
         for hero, state in pairs(combat_states) do
             if state.stacks > 0 then
                 state.remainingTicks = state.remainingTicks - 1
@@ -289,11 +297,14 @@ local function start_stack_timer()
                 end
             end
         end
-    end)
+    end, runtime_scope) or nil
 end
 
 function module.start(hero_results, seed)
     if started then return false end
+    runtime_scope = lifecycle and lifecycle.acquire("rogue.skills.wukong", function()
+        started, spell_trigger, attack_trigger, death_trigger, stack_timer = false, nil, nil, nil, nil
+    end) or nil
     started = true
     session_seed = math.max(1, math.floor(tonumber(seed) or 1))
     for _, result in ipairs(hero_results or {}) do
@@ -307,4 +318,9 @@ function module.start(hero_results, seed)
     return true
 end
 
+function module.stop()
+    return lifecycle ~= nil and lifecycle.release("rogue.skills.wukong") or false
+end
+
+JiuDou.publish("gameplay.rogue.skills.wukong", module)
 return module
