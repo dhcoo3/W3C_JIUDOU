@@ -242,6 +242,31 @@ function Write-LuaModule {
     [System.IO.File]::WriteAllText($Path, [string]::Join("`n", $lines), [System.Text.UTF8Encoding]::new($false))
 }
 
+function Write-SlkModule {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$FunctionName,
+        [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Sections,
+        [Parameter(Mandatory = $true)][string]$ClassName
+    )
+
+    $lines = New-Object System.Collections.Generic.List[string]
+    $lines.Add('--- 本文件由 generate_lua_config.ps1 自动生成，请勿手工修改。')
+    $lines.Add('--- 数据源来自 excelCfg 配置表；请修改 Excel 后重新执行生成工具。')
+    $lines.Add('--- xlik SLK 类别：' + $ClassName)
+    $lines.Add('')
+    foreach ($rawcode in $Sections.Keys) {
+        $entry = [ordered]@{
+            _id_force = [string]$rawcode
+        }
+        foreach ($key in $Sections[$rawcode].Keys) {
+            $entry[$key] = $Sections[$rawcode][$key]
+        }
+        $lines.Add($FunctionName + '(' + (ConvertTo-LuaValue $entry 0) + ')')
+        $lines.Add('')
+    }
+    [System.IO.File]::WriteAllText($Path, [string]::Join([Environment]::NewLine, $lines), [System.Text.UTF8Encoding]::new($false))
+}
 function Get-MonsterUnitRawcodes {
     param([Parameter(Mandatory = $true)][System.Collections.IDictionary]$Units)
 
@@ -2150,6 +2175,8 @@ try {
     $excelDirectory = [System.IO.Path]::GetFullPath($ExcelRoot)
     $tableDirectory = Join-Path $projectRoot 'table'
     $mapDirectory = Join-Path $projectRoot 'map'
+    $projectDirectory = Split-Path -Parent $projectRoot
+    $slkDirectory = Join-Path $projectDirectory 'slk'
     $configDirectory = [System.IO.Path]::GetFullPath($LuaRoot)
 
     if (-not (Test-Path -LiteralPath $projectRoot -PathType Container)) {
@@ -2277,7 +2304,7 @@ try {
         $abilityTable.Sections['A0E4']['Cost'] = @($armyManaCosts)
         $attributeData = New-AttributeConfig $attributeTable
     } else {
-        Write-Warning '缺少 excelCfg/roguelike.xlsx；保留当前已检入的 roguelike.ini 与 roguelike.lua。'
+        Write-Warning '缺少 excelCfg/roguelike.xlsx；保留当前已检入的 roguelike.lua。'
     }
     $abilitySections = [ordered]@{}
     foreach ($rawcode in $abilityTable.Sections.Keys) {
@@ -2306,16 +2333,13 @@ try {
     $regions = Read-RegionsFromJass (Join-Path $mapDirectory 'war3map.j')
     $equipmentData.statAbilities = $equipmentStatAbilities.luaData
 
-    $lniDefinitions = @(
-        @{ Name = 'unit.ini'; Data = $unitTable.Sections },
-        @{ Name = 'ability.ini'; Data = $abilitySections },
-        @{ Name = 'item.ini'; Data = $itemTable.Sections },
-        @{ Name = 'buff.ini'; Data = $buffTable.Sections },
-        @{ Name = 'experience.ini'; Data = $experienceData.lni }
+    $lniDefinitions = @()
+    $slkDefinitions = @(
+        @{ Name = 'generated_unit.lua'; FunctionName = 'slk_unit'; ClassName = 'unit'; Sections = $unitTable.Sections },
+        @{ Name = 'generated_ability.lua'; FunctionName = 'slk_ability'; ClassName = 'ability'; Sections = $abilitySections },
+        @{ Name = 'generated_item.lua'; FunctionName = 'slk_item'; ClassName = 'item'; Sections = $itemTable.Sections },
+        @{ Name = 'generated_buff.lua'; FunctionName = 'slk_buff'; ClassName = 'buff'; Sections = $buffTable.Sections }
     )
-    if ($null -ne $roguelikeData) {
-        $lniDefinitions += @{ Name = 'roguelike.ini'; Data = $roguelikeData.lni }
-    }
     $luaDefinitions = @(
         @{ Name = 'units.lua'; Annotations = @('---@class GeneratedUnitConfig', '---@field rawcode string 单位 Rawcode', '---@field _parent string|nil 原始单位模板', '---@field Name string|nil 单位名称', '---@field Ubertip string|nil 单位说明', '---@field heroAbilList string|nil 英雄技能 Rawcode 列表', '---@field cool1 number|nil 基础攻击间隔（秒）', '---@field dmgpt1 number|nil 攻击前摇（秒）；英雄由 unit.xlsx 配置并写入物编', '---@field backsw1 number|nil 攻击后摇（秒）；英雄由 unit.xlsx 配置并写入物编', '---@field initialAttackSpeedPercent integer|nil 英雄初始总攻速百分比；100%=标准，500%=5 倍；改表后须重新生成地图并重新开局', '---@field baseUnitId string|nil PVE 难度变体对应的基础怪物 ID', '---@field modeId integer|nil PVE 模式编号：1 普通，2 困难', '---@field difficultyLevel integer|nil PVE 难度等级 1–10', '---@field tier integer|nil 普通怪与精英的军团阶数（名称后缀“一阶”至“九阶”）', '---@field goldRep integer|nil 该物编变体的最终金币奖励', '---@field expReward integer|nil 该物编变体的最终经验奖励', '---@field poolId string|nil 装备掉落池 ID', '---@field dropLevelMin integer|nil 装备最低掉落等级', '---@field dropLevelMax integer|nil 装备最高掉落等级', '---@field dropChancePercent integer|nil 装备掉落概率；0 表示不掉落', '---@field maxDrops integer|nil 最大掉落数'); Data = $units },
         @{ Name = 'abilities.lua'; Annotations = @('---@class GeneratedAbilityConfig', '---@field rawcode string 技能 Rawcode', '---@field _parent string|nil 原始技能模板', '---@field Name string|nil 技能名称', '---@field Ubertip string|nil 技能说明', '---@field Cool integer|integer[]|nil 冷却时间', '---@field Rng integer|integer[]|nil 施法距离', '---@field Area integer|integer[]|nil 影响范围'); Data = $abilities },
@@ -2406,7 +2430,7 @@ try {
         ); Data = $attributeData }
     }
 
-    New-Item -ItemType Directory -Force -Path $tableDirectory, $configDirectory | Out-Null
+    New-Item -ItemType Directory -Force -Path $tableDirectory, $configDirectory, $slkDirectory | Out-Null
     $stagingDirectory = Join-Path $configDirectory ('.generate-staging-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $stagingDirectory | Out-Null
     try {
@@ -2422,6 +2446,11 @@ try {
             Write-LuaModule $sourcePath $definition.Annotations $definition.Data $configKey
             $stagedOutputs.Add([pscustomobject]@{ Source = $sourcePath; Destination = Join-Path $configDirectory $definition.Name })
         }
+        foreach ($definition in $slkDefinitions) {
+            $sourcePath = Join-Path $stagingDirectory $definition.Name
+            Write-SlkModule $sourcePath $definition.FunctionName $definition.Sections $definition.ClassName
+            $stagedOutputs.Add([pscustomobject]@{ Source = $sourcePath; Destination = Join-Path $slkDirectory $definition.Name })
+        }
         foreach ($output in $stagedOutputs) {
             if (Test-Path -LiteralPath $output.Destination) {
                 $backupPath = Join-Path $stagingDirectory (([System.IO.Path]::GetFileName($output.Destination)) + '.' + [guid]::NewGuid().ToString('N') + '.backup')
@@ -2436,7 +2465,7 @@ try {
         }
     }
 
-    Write-Host "[ok] Excel 配置、LNI 表与 Lua 表已生成：$configDirectory"
+    Write-Host "[ok] Excel 配置、SLK 源与 Lua 表已生成：$slkDirectory / $configDirectory"
     exit 0
 } catch {
     Write-Error "配置生成失败：$($_.Exception.Message)"
