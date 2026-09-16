@@ -1,5 +1,6 @@
 --- 通用肉鸽属性应用。
 local jass = require "jass.common"
+local config = require "rogue.config"
 local hero_stats = require "hero.stats"
 
 local module = {}
@@ -11,6 +12,28 @@ end
 local function growth_bonus(state, key)
     local hero_level = type(jass.GetHeroLevel) == "function" and jass.GetHeroLevel(state.hero) or 1
     return math.floor(math.max(0, hero_level - 1) * common(state, key) / 10)
+end
+
+--- 根据已拥有强化重建通用与英雄技能修正表。
+--- 只更新 Lua 运行态；原生属性投影由 refresh 统一处理。
+function module.rebuild(state)
+    if state == nil then return false end
+    state.common = {}
+    state.skills = {}
+    for effect_id, level in pairs(state.owned or {}) do
+        local effect = config.get_effect(effect_id)
+        if effect ~= nil and level > 0 then
+            local value = effect.values[level] or 0
+            if effect.type == "Common" then
+                state.common[effect.modifierKey] = (state.common[effect.modifierKey] or 0) + value
+            elseif effect.type == "Skill" then
+                state.skills[effect.skill] = state.skills[effect.skill] or {}
+                local skill = state.skills[effect.skill]
+                skill[effect.modifierKey] = (skill[effect.modifierKey] or 0) + value
+            end
+        end
+    end
+    return true
 end
 
 function module.refresh(state)

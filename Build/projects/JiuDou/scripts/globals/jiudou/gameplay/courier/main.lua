@@ -5,6 +5,7 @@ local jass = require "jass.common"
 local item_config = require "config.items"
 local equipment_instance = require "equipment.instance"
 local equipment_generator = require "equipment.generator"
+local fusion_protocol = require "courier.fusion_protocol"
 
 local module = {}
 
@@ -15,7 +16,6 @@ local CROW_FORM_RAWCODE = "Amrf"
 local FUSION_RADIUS = 300
 local FUSION_MAX_LEVEL = 5
 local FUSION_OUTPUT_SPACING = 72
-local SYNC_VERSION = "1"
 local MAX_MATERIAL_MESSAGE_LENGTH = 220
 
 local COURIER_ID = nil
@@ -254,24 +254,6 @@ local function build_fusion_plan(target_x, target_y)
     return material_uids, outputs
 end
 
-local function join_passives(passives)
-    if passives == nil or #passives == 0 then
-        return "-"
-    end
-    return table.concat(passives, ",")
-end
-
-local function parse_passives(value)
-    local result = {}
-    if value == nil or value == "" or value == "-" then
-        return result
-    end
-    for passive_id in string.gmatch(value, "[^,]+") do
-        table.insert(result, passive_id)
-    end
-    return result
-end
-
 local function get_output_position(target_x, target_y, index, count)
     if count <= 1 then
         return math.floor(target_x), math.floor(target_y)
@@ -283,34 +265,9 @@ local function get_output_position(target_x, target_y, index, count)
         math.floor(target_y + (row - (columns - 1) / 2) * FUSION_OUTPUT_SPACING)
 end
 
-local function encode_output(batch_id, output_index, equipment, x, y)
-    return table.concat({
-        "BIRD_FUSION_OUTPUT", SYNC_VERSION, tostring(batch_id), tostring(output_index),
-        tostring(equipment.uid), equipment.rawcode,
-        equipment.templateId ~= nil and equipment.templateId ~= "" and equipment.templateId or "-",
-        tostring(equipment.level), tostring(equipment.stats.attack), tostring(equipment.stats.health),
-        tostring(equipment.stats.armor), tostring(equipment.stats.basicAttackBonusPercent or 0),
-        tostring(equipment.stats.healthAmplificationPercent or 0), equipment.autoSkillId or "-",
-        join_passives(equipment.passiveSkillIds), equipment.comboSetId or "-", equipment.comboPieceId or "-",
-        tostring(x), tostring(y),
-    }, "|")
-end
-
 local function broadcast_materials(batch_id, material_uids)
-    local prefix = table.concat({"BIRD_FUSION_MATERIALS", SYNC_VERSION, tostring(batch_id), ""}, "|")
-    local payload = ""
-    for _, uid in ipairs(material_uids) do
-        local value = tostring(uid)
-        local candidate = payload == "" and value or payload .. "," .. value
-        if payload ~= "" and #prefix + #candidate > MAX_MATERIAL_MESSAGE_LENGTH then
-            sync_module.broadcast(prefix .. payload)
-            payload = value
-        else
-            payload = candidate
-        end
-    end
-    if payload ~= "" then
-        sync_module.broadcast(prefix .. payload)
+    for _, message in ipairs(fusion_protocol.encode_materials(batch_id, material_uids, MAX_MATERIAL_MESSAGE_LENGTH)) do
+        sync_module.broadcast(message)
     end
 end
 
@@ -321,15 +278,13 @@ local function create_fusion_batch(player_id, target_x, target_y)
     end
     next_batch_id = next_batch_id + 1
     local batch_id = next_batch_id
-    sync_module.broadcast(table.concat({
-        "BIRD_FUSION_BEGIN", SYNC_VERSION, tostring(batch_id), tostring(player_id), tostring(#outputs),
-    }, "|"))
+    sync_module.broadcast(fusion_protocol.encode_begin(batch_id, player_id, #outputs))
     broadcast_materials(batch_id, material_uids)
     for index, equipment in ipairs(outputs) do
         local output_x, output_y = get_output_position(target_x, target_y, index, #outputs)
-        sync_module.broadcast(encode_output(batch_id, index, equipment, output_x, output_y))
+        sync_module.broadcast(fusion_protocol.encode_output(batch_id, index, equipment, output_x, output_y))
     end
-    sync_module.broadcast(table.concat({"BIRD_FUSION_END", SYNC_VERSION, tostring(batch_id)}, "|"))
+    sync_module.broadcast(fusion_protocol.encode_end(batch_id))
     return true
 end
 
@@ -435,85 +390,43 @@ local function apply_fusion_batch(batch_id)
 end
 
 local function handle_sync_begin(parts, sender_id)
-    if #parts ~= 5 or parts[2] ~= SYNC_VERSION or not is_trusted_sender(sender_id) then
+    if not is_trusted_sender(sender_id) then return end
+    local message = fusion_protocol.decode_begin(parts)
+    if message == nil or processed_batches[message.batchId] or pending_batches[message.batchId] ~= nil then
         return
     end
-    local batch_id = tonumber(parts[3])
-    local player_id = tonumber(parts[4])
-    local expected_output_count = tonumber(parts[5])
-    if batch_id == nil or player_id == nil or expected_output_count == nil or expected_output_count <= 0 then
-        return
-    end
-    if processed_batches[batch_id] or pending_batches[batch_id] ~= nil then
-        return
-    end
-    pending_batches[batch_id] = {
-        playerId = player_id,
-        expectedOutputCount = expected_output_count,
+    pending_batches[message.batchId] = {
+        playerId = message.playerId,
+        expectedOutputCount = message.expectedOutputCount,
         materialUids = {},
         outputs = {},
     }
 end
 
 local function handle_sync_materials(parts, sender_id)
-    if #parts ~= 4 or parts[2] ~= SYNC_VERSION or not is_trusted_sender(sender_id) then
-        return
-    end
-    local batch = pending_batches[tonumber(parts[3])]
-    if batch == nil then
-        return
-    end
-    for uid in string.gmatch(parts[4], "[^,]+") do
-        local numeric_uid = tonumber(uid)
-        if numeric_uid ~= nil then
-            table.insert(batch.materialUids, numeric_uid)
-        end
-    end
+    if not is_trusted_sender(sender_id) then return end
+    local message = fusion_protocol.decode_materials(parts)
+    local batch = message and pending_batches[message.batchId] or nil
+    if batch == nil then return end
+    for _, uid in ipairs(message.materialUids) do table.insert(batch.materialUids, uid) end
 end
 
 local function handle_sync_output(parts, sender_id)
-    if #parts ~= 19 or parts[2] ~= SYNC_VERSION or not is_trusted_sender(sender_id) then
-        return
-    end
-    local batch = pending_batches[tonumber(parts[3])]
-    local index = tonumber(parts[4])
-    local uid = tonumber(parts[5])
-    local level = tonumber(parts[8])
-    if batch == nil or index == nil or uid == nil or level == nil or index < 1 then
-        return
-    end
-    for _, output in ipairs(batch.outputs) do
-        if output.index == index or output.uid == uid then
+    if not is_trusted_sender(sender_id) then return end
+    local incoming_output = fusion_protocol.decode_output(parts)
+    local batch = incoming_output and pending_batches[incoming_output.batchId] or nil
+    if batch == nil then return end
+    for _, existing_output in ipairs(batch.outputs) do
+        if existing_output.index == incoming_output.index or existing_output.uid == incoming_output.uid then
             return
         end
     end
-    table.insert(batch.outputs, {
-        index = index,
-        uid = uid,
-        rawcode = parts[6],
-        templateId = parts[7] == "-" and "" or parts[7],
-        level = level,
-        stats = {
-            attack = tonumber(parts[9]) or 0,
-            health = tonumber(parts[10]) or 0,
-            armor = tonumber(parts[11]) or 0,
-            basicAttackBonusPercent = tonumber(parts[12]) or 0,
-            healthAmplificationPercent = tonumber(parts[13]) or 0,
-        },
-        autoSkillId = parts[14] == "-" and nil or parts[14],
-        passiveSkillIds = parse_passives(parts[15]),
-        comboSetId = parts[16] == "-" and nil or parts[16],
-        comboPieceId = parts[17] == "-" and nil or parts[17],
-        x = tonumber(parts[18]) or 0,
-        y = tonumber(parts[19]) or 0,
-    })
+    table.insert(batch.outputs, incoming_output)
 end
 
 local function handle_sync_end(parts, sender_id)
-    if #parts ~= 3 or parts[2] ~= SYNC_VERSION or not is_trusted_sender(sender_id) then
-        return
-    end
-    local batch_id = tonumber(parts[3])
+    if not is_trusted_sender(sender_id) then return end
+    local batch_id = fusion_protocol.decode_end(parts)
     if batch_id ~= nil then
         apply_fusion_batch(batch_id)
     end

@@ -7,6 +7,8 @@ local damage_numbers = require "combat.damage_numbers"
 local gold = require "gold.main"
 local experience = require "experience.main"
 local special_spawn = require "monster.special_spawn"
+local timeline_service = require "monster.timeline"
+local initial_queue = require "monster.initial_queue"
 local cataclysm_ui = require "monster.ui.cataclysm"
 local special_count_ui = require "monster.ui.special_count"
 
@@ -46,8 +48,7 @@ local INITIAL_SPAWN_INTERVAL_SECONDS = 0.04
 ---@field affixEffect effect|nil 本次小怪的天灾词缀识别特效
 
 local running = false
-local scheduler_timer = nil
-local initial_spawn_timer = nil
+local timeline = nil
 local death_trigger = nil
 local scheduler_tick = 0
 local difficulty = nil
@@ -56,8 +57,6 @@ local hero_results = {}
 local session_seed_value = nil
 local active_player_ids = {}
 local special_count = 0
-local initial_spawn_queue = {}
-local initial_spawn_index = 1
 local on_scheduler_tick
 local shared_vision_warning_printed = false
 local minimap_ping_warning_printed = false
@@ -843,8 +842,9 @@ local function process_due_spawns()
 end
 
 local function start_scheduler()
-    scheduler_timer = jass.CreateTimer()
-    jass.TimerStart(scheduler_timer, config.SETTINGS.schedulerIntervalSeconds, true, on_scheduler_tick)
+    if timeline == nil or not timeline:start_scheduler(config.SETTINGS.schedulerIntervalSeconds, on_scheduler_tick) then
+        error("PVE 刷怪系统启动失败：无法创建固定调度计时器")
+    end
     print(string.format(
         "PVE 刷怪系统已启动：单位属性来自 unit.xlsx 最终变体，难度=%d，模式=%d，普通怪=%d，精英=%d",
         difficulty.level,
@@ -855,64 +855,33 @@ local function start_scheduler()
 end
 
 local function finish_initial_spawn()
-    if initial_spawn_timer ~= nil then
-        jass.PauseTimer(initial_spawn_timer)
-        jass.DestroyTimer(initial_spawn_timer)
-        initial_spawn_timer = nil
-    end
-    initial_spawn_queue = {}
-    initial_spawn_index = 1
     print("PVE 首波怪物分帧生成完成")
     print("PVE 刷怪状态摘要：" .. module.get_state_summary())
 end
 
---- 优先生成玩家所在区域，再分帧补齐其余初始怪物。
---- 每个槽位拥有独立随机流，因此调整创建先后不会改变跨客户端结果。
-local function build_initial_spawn_queue()
-    local priority_blocks = {}
-    for _, result in ipairs(hero_results) do
-        priority_blocks[result.blockId] = true
-    end
-
-    local queue = {}
-    local last_initial_slot = NORMAL_SLOT_COUNT + ELITE_SLOT_COUNT
-    for priority_pass = 1, 2 do
-        local want_priority = priority_pass == 1
-        for index = 1, last_initial_slot do
-            local slot = slots[index]
-            local is_priority = priority_blocks[slot.blockId] == true
-            if is_priority == want_priority then
-                table.insert(queue, slot)
-            end
-        end
-    end
-    return queue
-end
-
-local function spawn_initial_batch()
-    local last_index = math.min(
-        #initial_spawn_queue,
-        initial_spawn_index + INITIAL_SPAWN_BATCH_SIZE - 1
-    )
-    for index = initial_spawn_index, last_index do
-        local slot = initial_spawn_queue[index]
-        if slot.kind == "normal" then
-            spawn_normal(slot)
-        else
-            spawn_elite(slot)
-        end
-    end
-    initial_spawn_index = last_index + 1
-    if initial_spawn_index > #initial_spawn_queue then
-        finish_initial_spawn()
+local function spawn_initial_slot(slot)
+    if slot.kind == "normal" then
+        spawn_normal(slot)
+    else
+        spawn_elite(slot)
     end
 end
 
 local function start_initial_spawn()
-    initial_spawn_queue = build_initial_spawn_queue()
-    initial_spawn_index = 1
-    initial_spawn_timer = jass.CreateTimer()
-    jass.TimerStart(initial_spawn_timer, INITIAL_SPAWN_INTERVAL_SECONDS, true, spawn_initial_batch)
+    local initial_spawn_queue = initial_queue.build(
+        slots,
+        hero_results,
+        NORMAL_SLOT_COUNT + ELITE_SLOT_COUNT
+    )
+    if timeline == nil or not timeline:start_initial_batches(
+        initial_spawn_queue,
+        INITIAL_SPAWN_BATCH_SIZE,
+        INITIAL_SPAWN_INTERVAL_SECONDS,
+        spawn_initial_slot,
+        finish_initial_spawn
+    ) then
+        error("PVE 刷怪系统启动失败：无法创建首波分帧计时器")
+    end
     print(string.format(
         "PVE 首波怪物开始分帧生成：共%d只，每批%d只，优先玩家所在区域",
         #initial_spawn_queue,
@@ -1049,6 +1018,7 @@ function module.start(selection, selections, session_seed)
 
     scheduler_tick = 0
     current_army_tier = 1
+    timeline = timeline_service.create("monster:" .. tostring(session_seed_value))
     if not special_spawn.start(hero_results) then
         print("PVE 刷怪系统启动失败：特殊怪生成概率接口未能启动")
         return false

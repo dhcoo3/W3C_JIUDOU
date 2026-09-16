@@ -4,26 +4,17 @@ local jass = require "jass.common"
 local equipment_config = require "config.equipment"
 local attribute_config = require "config.attributes"
 local unit_config = require "config.units"
+local attribute_schema = require "hero.attribute.schema"
+local source_store = require "hero.attribute.source_store"
+local native_projector = require "hero.attribute.native_projector"
 local events = JiuDou.core and JiuDou.core.events
 local timer_service = JiuDou.core and JiuDou.core.timer
 local resource_api = JiuDou.core and JiuDou.core.resource
 
 local module = {}
+local empty_values = attribute_schema.empty
+local copy_values = attribute_schema.copy
 
-local ATTRIBUTE_IDS = {
-    "strength",
-    "agility",
-    "intelligence",
-    "attack",
-    "health",
-    "armor",
-    "moveSpeed",
-    "attack_speed_percent",
-    "basic_attack_bonus_percent",
-    "health_amplification_percent",
-}
-
-local sources_by_hero = {}
 local applied_states = {}
 local listeners = {}
 local preload_timer = nil
@@ -38,8 +29,6 @@ local preload_callbacks = {}
 local PRELOAD_INTERVAL_SECONDS = 0.04
 local PRELOAD_OPERATIONS_PER_TICK = 4
 local PRELOAD_DUMMY_RAWCODE = "hpea"
--- 生命状态投影使用七位临时 AIlf 技能，最多可额外写入 9,999,999 点生命。
-local MAX_DIGIT_COUNT = 7
 -- 三维属性的 Warcraft 原生副作用由 war3mapMisc.txt 全局归零。
 -- 本模块只投影项目规则，绝不对原生力量/敏捷/智力效果进行抵销。
 local PRIMARY_ATTRIBUTE_BY_CODE = {
@@ -48,220 +37,12 @@ local PRIMARY_ATTRIBUTE_BY_CODE = {
     INT = "intelligence",
 }
 
-local function rawcode_to_integer(rawcode)
-    if type(rawcode) ~= "string" or #rawcode ~= 4 then return nil end
-    local a, b, c, d = string.byte(rawcode, 1, 4)
-    if a == nil or b == nil or c == nil or d == nil then return nil end
-    return a * 0x1000000 + b * 0x10000 + c * 0x100 + d
-end
-
-local function empty_values()
-    return {
-        strength = 0,
-        agility = 0,
-        intelligence = 0,
-        attack = 0,
-        health = 0,
-        armor = 0,
-        moveSpeed = 0,
-        attack_speed_percent = 0,
-        basic_attack_bonus_percent = 0,
-        health_amplification_percent = 0,
-    }
-end
-
-local function normalize_values(values)
-    values = type(values) == "table" and values or {}
-    local normalized = empty_values()
-    for _, attribute_id in ipairs(ATTRIBUTE_IDS) do
-        normalized[attribute_id] = math.floor(tonumber(values[attribute_id]) or 0)
-    end
-    return normalized
-end
-
-local function copy_values(values)
-    local copied = empty_values()
-    for _, attribute_id in ipairs(ATTRIBUTE_IDS) do
-        copied[attribute_id] = math.floor(tonumber(values and values[attribute_id]) or 0)
-    end
-    return copied
-end
-
-local function ensure_ability(unit_handle, rawcode)
-    local ability_id = rawcode_to_integer(rawcode)
-    if ability_id == nil or type(jass.UnitAddAbility) ~= "function" then return false end
-    local current = type(jass.GetUnitAbilityLevel) == "function"
-        and (jass.GetUnitAbilityLevel(unit_handle, ability_id) or 0) or 0
-    return current > 0 or jass.UnitAddAbility(unit_handle, ability_id)
-end
-
-local function set_ability_level(unit_handle, rawcode, level)
-    local ability_id = rawcode_to_integer(rawcode)
-    if ability_id == nil or type(jass.SetUnitAbilityLevel) ~= "function"
-        or type(jass.UnitAddAbility) ~= "function" then return false end
-    level = math.max(1, math.min(10, math.floor(tonumber(level) or 1)))
-    local current = type(jass.GetUnitAbilityLevel) == "function"
-        and (jass.GetUnitAbilityLevel(unit_handle, ability_id) or 0) or 0
-    if current <= 0 and not jass.UnitAddAbility(unit_handle, ability_id) then return false end
-    if current ~= level then jass.SetUnitAbilityLevel(unit_handle, ability_id, level) end
-    return true
-end
-
-local function get_max_projected_value(rawcodes)
-    local digit_count = type(rawcodes) == "table" and #rawcodes or 0
-    if digit_count < 1 or digit_count > MAX_DIGIT_COUNT then return nil end
-    return 10 ^ digit_count - 1
-end
-
-local function normalize_projected_value(value, maximum)
-    maximum = math.max(0, math.floor(tonumber(maximum) or 0))
-    return math.max(0, math.min(maximum, math.floor(tonumber(value) or 0)))
-end
-
-local function normalize_signed_projected_value(value, maximum)
-    maximum = math.max(0, math.floor(tonumber(maximum) or 0))
-    return math.max(-maximum, math.min(maximum, math.floor(tonumber(value) or 0)))
-end
-
-local function apply_digit_stat(hero, rawcodes, value, previous_value)
-    local maximum = get_max_projected_value(rawcodes)
-    if maximum == nil then return false end
-    value = normalize_projected_value(value, maximum)
-    previous_value = normalize_projected_value(previous_value, maximum)
-    local function set_digits(reverse)
-        local start_index, end_index, step = reverse and 4 or 1, reverse and 1 or 4, reverse and -1 or 1
-        for index = start_index, end_index, step do
-            local divisor = 10 ^ (index - 1)
-            local level = math.floor(value / divisor) % 10 + 1
-            if not set_ability_level(hero, rawcodes[index], level) then return false end
-        end
-        return true
-    end
-    return set_digits(value >= previous_value)
-end
-
-local function get_digit_levels(value, rawcodes)
-    local maximum = get_max_projected_value(rawcodes)
-    if maximum == nil then return {} end
-    value = normalize_projected_value(value, maximum)
-    local levels = {}
-    for index = 1, #rawcodes do
-        local divisor = 10 ^ (index - 1)
-        levels[index] = math.floor(value / divisor) % 10 + 1
-    end
-    return levels
-end
-
-local function get_ability_levels(hero, rawcodes)
-    local levels = {}
-    for index, rawcode in ipairs(rawcodes or {}) do
-        local ability_id = rawcode_to_integer(rawcode)
-        levels[index] = ability_id ~= nil and type(jass.GetUnitAbilityLevel) == "function"
-            and math.floor(jass.GetUnitAbilityLevel(hero, ability_id) or 0) or 0
-    end
-    return levels
-end
-
-local function get_absent_ability_levels(rawcodes)
-    local levels = {}
-    for index = 1, #(rawcodes or {}) do levels[index] = 0 end
-    return levels
-end
-
-local function get_state_ratio(hero, maximum_state, current_state)
-    if type(jass.GetUnitState) ~= "function" or maximum_state == nil or current_state == nil then return nil end
-    local maximum = jass.GetUnitState(hero, maximum_state)
-    local current = jass.GetUnitState(hero, current_state)
-    if maximum == nil or maximum <= 0 or current == nil then return nil end
-    return math.max(0, math.min(1, current / maximum))
-end
-
--- Warcraft 1.27 的 UNIT_STATE_MAX_LIFE 不能直接写入。
--- AIlf 的可靠兼容写法是：临时添加一个“反向数值”的生命技能，设置等级后立刻移除。
--- 引擎在移除技能时会反向结算该技能，从而把目标生命差额永久写进单位状态。
--- 生命技能绝不能常驻；常驻只会显示技能等级，某些 1.27 客户端并不会将其结算为英雄最大生命。
-local function apply_temporary_life_digit(hero, rawcode, level)
-    local ability_id = rawcode_to_integer(rawcode)
-    if ability_id == nil or type(jass.UnitAddAbility) ~= "function"
-        or type(jass.SetUnitAbilityLevel) ~= "function" or type(jass.UnitRemoveAbility) ~= "function" then
-        return false
-    end
-    level = math.max(2, math.min(10, math.floor(tonumber(level) or 2)))
-    if not jass.UnitAddAbility(hero, ability_id) then return false end
-    local level_ok = jass.SetUnitAbilityLevel(hero, ability_id, level)
-    local remove_ok = jass.UnitRemoveAbility(hero, ability_id)
-    return level_ok ~= false and remove_ok ~= false
-end
-
-local function apply_temporary_life_digits(hero, rawcodes, value)
-    local maximum = get_max_projected_value(rawcodes)
-    if maximum == nil then return false end
-    value = normalize_projected_value(value, maximum)
-    for index, rawcode in ipairs(rawcodes) do
-        local divisor = 10 ^ (index - 1)
-        local digit = math.floor(value / divisor) % 10
-        if digit > 0 and not apply_temporary_life_digit(hero, rawcode, digit + 1) then
-            return false
-        end
-    end
-    return true
-end
-
-local function apply_life_projection(hero, abilities, value, previous_value, base_maximum)
-    local maximum = math.min(
-        get_max_projected_value(abilities.healthDecrease) or 0,
-        get_max_projected_value(abilities.healthIncrease) or 0
-    )
-    if maximum <= 0 then return false end
-    value = normalize_signed_projected_value(value, maximum)
-    previous_value = normalize_signed_projected_value(previous_value, maximum)
-    local ratio = get_state_ratio(hero, jass.UNIT_STATE_MAX_LIFE, jass.UNIT_STATE_LIFE)
-    local delta = value - previous_value
-    if delta > 0 then
-        -- healthIncrease 的 DataA 为负数；移除后永久增加生命。
-        if not apply_temporary_life_digits(hero, abilities.healthIncrease, delta) then return false end
-    elseif delta < 0 then
-        -- healthDecrease 的 DataA 为正数；移除后永久减少生命。
-        if not apply_temporary_life_digits(hero, abilities.healthDecrease, -delta) then return false end
-    end
-    if ratio ~= nil and type(jass.SetUnitState) == "function" then
-        local maximum = jass.GetUnitState(hero, jass.UNIT_STATE_MAX_LIFE)
-        jass.SetUnitState(hero, jass.UNIT_STATE_LIFE, maximum * ratio)
-    end
-    local actual_maximum = type(jass.GetUnitState) == "function" and jass.UNIT_STATE_MAX_LIFE ~= nil
-        and math.floor(tonumber(jass.GetUnitState(hero, jass.UNIT_STATE_MAX_LIFE)) or 0) or 0
-    local expected_maximum = math.floor(tonumber(base_maximum) or 0) + value
-    return actual_maximum == expected_maximum
-end
-
-local function apply_signed_projection(hero, positive_abilities, negative_abilities, value, previous_value)
-    local maximum = math.min(
-        get_max_projected_value(positive_abilities) or 0,
-        get_max_projected_value(negative_abilities) or 0
-    )
-    if maximum <= 0 then return false end
-    value = normalize_signed_projected_value(value, maximum)
-    previous_value = normalize_signed_projected_value(previous_value, maximum)
-    local positive = math.max(0, value)
-    local negative = math.max(0, -value)
-    local previous_positive = math.max(0, previous_value)
-    local previous_negative = math.max(0, -previous_value)
-    if value >= previous_value then
-        if not apply_digit_stat(hero, negative_abilities, negative, previous_negative) then return false end
-        if not apply_digit_stat(hero, positive_abilities, positive, previous_positive) then return false end
-    else
-        if not apply_digit_stat(hero, positive_abilities, positive, previous_positive) then return false end
-        if not apply_digit_stat(hero, negative_abilities, negative, previous_negative) then return false end
-    end
-    return true
-end
-
 --- 攻速投影必须在每次属性刷新时校验，不能只相信 Lua 缓存。
 --- Warcraft 原生升级或属性重算可能保留缓存值、却覆盖 AIsx 的实际等级。
 local function apply_attack_speed_projection(hero, state, abilities, desired_attack_speed)
     if abilities.attackSpeedPositive == nil or abilities.attackSpeedNegative == nil then return false end
     -- previous_value 故意传入当前目标值，让八个数字技能无论缓存是否变化都逐个核对。
-    if not apply_signed_projection(
+    if not native_projector.apply_signed_projection(
         hero,
         abilities.attackSpeedPositive,
         abilities.attackSpeedNegative,
@@ -275,21 +56,7 @@ local function apply_attack_speed_projection(hero, state, abilities, desired_att
 end
 
 local function ensure_stat_abilities(hero)
-    local abilities = equipment_config.statAbilities
-    for _, group in ipairs({
-        abilities.attack,
-        abilities.attackDecrease,
-        abilities.armor,
-        abilities.armorDecrease,
-        abilities.attackSpeedPositive,
-        abilities.attackSpeedNegative,
-    }) do
-        if get_max_projected_value(group) == nil then return false end
-        for _, rawcode in ipairs(group) do
-            if not ensure_ability(hero, rawcode) then return false end
-        end
-    end
-    return true
+    return native_projector.ensure_stat_abilities(hero, equipment_config.statAbilities)
 end
 
 local function make_state(hero, primary_attribute, hero_rawcode)
@@ -322,13 +89,7 @@ local function make_state(hero, primary_attribute, hero_rawcode)
 end
 
 local function sum_sources(hero)
-    local total = empty_values()
-    for _, values in pairs(sources_by_hero[hero] or {}) do
-        for _, attribute_id in ipairs(ATTRIBUTE_IDS) do
-            total[attribute_id] = total[attribute_id] + values[attribute_id]
-        end
-    end
-    return total
+    return source_store.sum(hero)
 end
 
 local function calculate_attack_speed_projection(state, total)
@@ -418,7 +179,7 @@ local function get_preload_rawcodes()
         abilities.attackSpeedPositive,
         abilities.attackSpeedNegative,
     }) do
-        if get_max_projected_value(group) == nil then return nil end
+        if native_projector.get_max_projected_value(group) == nil then return nil end
         for _, rawcode in ipairs(group) do table.insert(result, rawcode) end
     end
     return result
@@ -438,7 +199,7 @@ function module.preload(on_completed)
     if preload_completed or preload_timer ~= nil then return true end
     local abilities = equipment_config.statAbilities
     if abilities == nil or type(jass.CreateUnit) ~= "function" then return false end
-    local dummy_id = rawcode_to_integer(PRELOAD_DUMMY_RAWCODE)
+    local dummy_id = native_projector.rawcode_to_integer(PRELOAD_DUMMY_RAWCODE)
     if dummy_id == nil then return false end
     preload_dummy = jass.CreateUnit(jass.Player(15), dummy_id, 0.0, 0.0, 0.0)
     if preload_dummy == nil then return false end
@@ -457,7 +218,7 @@ function module.preload(on_completed)
             if preload_index > preload_total_steps then break end
             local rawcode_index = math.floor((preload_index - 1) / 10) + 1
             local level = (preload_index - 1) % 10 + 1
-            local ability_id = rawcode_to_integer(rawcodes[rawcode_index])
+            local ability_id = native_projector.rawcode_to_integer(rawcodes[rawcode_index])
             if ability_id ~= nil then
                 if level == 1 then jass.UnitAddAbility(preload_dummy, ability_id) end
                 jass.SetUnitAbilityLevel(preload_dummy, ability_id, level)
@@ -503,7 +264,7 @@ end
 ---@return boolean registered
 function module.register_hero(hero, primary_attribute, hero_rawcode)
     if hero == nil or equipment_config.statAbilities == nil then return false end
-    sources_by_hero[hero] = sources_by_hero[hero] or {}
+    source_store.ensure(hero)
     local is_new_registration = applied_states[hero] == nil
     if applied_states[hero] ~= nil then
         applied_states[hero].primaryAttribute = PRIMARY_ATTRIBUTE_BY_CODE[primary_attribute]
@@ -539,9 +300,8 @@ end
 ---@return boolean refreshed
 function module.set_source(hero, source_id, values)
     if hero == nil or type(source_id) ~= "string" or source_id == "" then return false end
-    sources_by_hero[hero] = sources_by_hero[hero] or {}
-    local normalized = normalize_values(values)
-    sources_by_hero[hero][source_id] = normalized
+    local normalized = source_store.set(hero, source_id, values)
+    if normalized == nil then return false end
     local refreshed = module.refresh(hero)
     if refreshed then
         notify_source_changed(hero, source_id, normalized, false)
@@ -553,8 +313,7 @@ end
 ---@param source_id string
 ---@return boolean refreshed
 function module.clear_source(hero, source_id)
-    local had_source = sources_by_hero[hero] ~= nil and sources_by_hero[hero][source_id] ~= nil
-    if sources_by_hero[hero] ~= nil then sources_by_hero[hero][source_id] = nil end
+    local had_source = source_store.clear(hero, source_id)
     local refreshed = module.refresh(hero)
     if refreshed and had_source then
         notify_source_changed(hero, source_id, nil, true)
@@ -586,7 +345,9 @@ function module.refresh(hero)
     -- 主属性原生攻击奖励已归零，因此全部项目属性攻击力只投影一次。
     local desired_hidden_attack = attribute_attack + total.attack
     if state.applied.attack ~= desired_hidden_attack then
-        if not apply_signed_projection(hero, abilities.attack, abilities.attackDecrease, desired_hidden_attack, state.applied.attack) then return false end
+        if not native_projector.apply_signed_projection(
+            hero, abilities.attack, abilities.attackDecrease, desired_hidden_attack, state.applied.attack
+        ) then return false end
         state.applied.attack = desired_hidden_attack
     end
     local health_amplification = math.floor(snapshot.strength / 10) + total.health_amplification_percent
@@ -597,7 +358,9 @@ function module.refresh(hero)
     -- 使用临时 AIlf 七位数字状态写入，最大可增加/减少 9,999,999 点生命。
     local desired_hidden_health = desired_health - health_base
     if state.applied.health ~= desired_hidden_health then
-        if not apply_life_projection(hero, abilities, desired_hidden_health, state.applied.health, health_base) then
+        if not native_projector.apply_life_projection(
+            hero, abilities, desired_hidden_health, state.applied.health, health_base
+        ) then
             print(string.format(
                 "生命投影失败：目标=%d，旧投影=%d，当前最大生命=%d",
                 desired_health,
@@ -612,7 +375,9 @@ function module.refresh(hero)
     local desired_armor_tenth = math.floor(state.baseArmorTenth or 0) + total.armor * 10
     local desired_hidden_armor = total.armor * 10
     if state.applied.armor ~= desired_hidden_armor then
-        if not apply_signed_projection(hero, abilities.armor, abilities.armorDecrease, desired_hidden_armor, state.applied.armor) then return false end
+        if not native_projector.apply_signed_projection(
+            hero, abilities.armor, abilities.armorDecrease, desired_hidden_armor, state.applied.armor
+        ) then return false end
         state.applied.armor = desired_hidden_armor
     end
     local attack_speed_percent, desired_attack_speed = calculate_attack_speed_projection(state, total)
@@ -673,13 +438,13 @@ function module.get_attack_speed_debug(hero)
         desiredProjectionTenth = desired_projection_tenth,
         positive = {
             rawcodes = abilities.attackSpeedPositive or {},
-            expectedLevels = get_digit_levels(positive_value, abilities.attackSpeedPositive),
-            actualLevels = get_ability_levels(hero, abilities.attackSpeedPositive),
+            expectedLevels = native_projector.get_digit_levels(positive_value, abilities.attackSpeedPositive),
+            actualLevels = native_projector.get_ability_levels(hero, abilities.attackSpeedPositive),
         },
         negative = {
             rawcodes = abilities.attackSpeedNegative or {},
-            expectedLevels = get_digit_levels(negative_value, abilities.attackSpeedNegative),
-            actualLevels = get_ability_levels(hero, abilities.attackSpeedNegative),
+            expectedLevels = native_projector.get_digit_levels(negative_value, abilities.attackSpeedNegative),
+            actualLevels = native_projector.get_ability_levels(hero, abilities.attackSpeedNegative),
         },
     }
 end
@@ -713,20 +478,20 @@ function module.get_health_debug(hero)
         appliedProjection = math.floor(tonumber(state.applied.health) or 0),
         pendingDelta = desired_projection - math.floor(tonumber(state.applied.health) or 0),
         projectionMaximum = math.min(
-            get_max_projected_value(abilities.healthIncrease) or 0,
-            get_max_projected_value(abilities.healthDecrease) or 0
+            native_projector.get_max_projected_value(abilities.healthIncrease) or 0,
+            native_projector.get_max_projected_value(abilities.healthDecrease) or 0
         ),
         currentLife = current_life,
         maximumLife = maximum_life,
         positive = {
             rawcodes = abilities.healthIncrease or {},
-            expectedLevels = get_absent_ability_levels(abilities.healthIncrease),
-            actualLevels = get_ability_levels(hero, abilities.healthIncrease),
+            expectedLevels = native_projector.get_absent_ability_levels(abilities.healthIncrease),
+            actualLevels = native_projector.get_ability_levels(hero, abilities.healthIncrease),
         },
         negative = {
             rawcodes = abilities.healthDecrease or {},
-            expectedLevels = get_absent_ability_levels(abilities.healthDecrease),
-            actualLevels = get_ability_levels(hero, abilities.healthDecrease),
+            expectedLevels = native_projector.get_absent_ability_levels(abilities.healthDecrease),
+            actualLevels = native_projector.get_ability_levels(hero, abilities.healthDecrease),
         },
     }
 end
@@ -776,8 +541,7 @@ end
 ---@param source_id string
 ---@return table<string, integer> values
 function module.get_source(hero, source_id)
-    local values = sources_by_hero[hero] and sources_by_hero[hero][source_id]
-    return copy_values(values)
+    return source_store.get(hero, source_id)
 end
 
 --- 保持与旧装备接口的兼容，同时返回当前最终战斗属性。

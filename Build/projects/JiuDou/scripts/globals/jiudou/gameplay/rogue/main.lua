@@ -5,6 +5,7 @@ local state_store = require "rogue.state"
 local pool = require "rogue.pool"
 local sync = require "rogue.sync"
 local attribute = require "rogue.attribute"
+local runtime_service = require "rogue.runtime"
 local popup = require "rogue.ui.popup"
 local hero_stats = require "hero.stats"
 local wukong = require "rogue.skills.wukong"
@@ -20,8 +21,7 @@ local sync_available = false
 local critical_enabled = false
 local session_seed = 1
 local session_id = 1
-local level_trigger = nil
-local countdown_timer = nil
+local runtime = nil
 local local_selection = {}
 
 local function is_integer(value)
@@ -37,24 +37,6 @@ end
 local function contains(choices, effect_id)
     for _, id in ipairs(choices or {}) do if id == effect_id then return true end end
     return false
-end
-
-local function rebuild_modifiers(state)
-    state.common = {}
-    state.skills = {}
-    for effect_id, level in pairs(state.owned) do
-        local effect = config.get_effect(effect_id)
-        if effect ~= nil and level > 0 then
-            local value = effect.values[level] or 0
-            if effect.type == "Common" then
-                state.common[effect.modifierKey] = (state.common[effect.modifierKey] or 0) + value
-            elseif effect.type == "Skill" then
-                state.skills[effect.skill] = state.skills[effect.skill] or {}
-                local skill = state.skills[effect.skill]
-                skill[effect.modifierKey] = (skill[effect.modifierKey] or 0) + value
-            end
-        end
-    end
 end
 
 local function show_local_offer(state)
@@ -186,7 +168,7 @@ local function apply_reward(parts, sender_id)
     state.processedApplies[apply_key] = true
     state.owned[effect_id] = new_level
     state.currentOffer = nil
-    rebuild_modifiers(state)
+    attribute.rebuild(state)
     attribute.refresh(state)
     if sync.get_local_player_id() == player_id then
         local_selection[player_id] = nil
@@ -313,17 +295,9 @@ local function on_hero_level(hero)
     open_next_offer(state)
 end
 
-local function register_level_events()
-    level_trigger = jass.CreateTrigger()
-    for player_id in pairs(state_store.get_all()) do
-        jass.TriggerRegisterPlayerUnitEvent(level_trigger, jass.Player(player_id), jass.EVENT_PLAYER_HERO_LEVEL, nil)
-    end
-    jass.TriggerAddAction(level_trigger, function() on_hero_level(jass.GetTriggerUnit()) end)
-end
-
 local function start_countdown()
-    countdown_timer = jass.CreateTimer()
-    jass.TimerStart(countdown_timer, 1.0, true, function()
+    if runtime == nil then return false end
+    return runtime:start_countdown(1.0, function()
         for _, state in pairs(state_store.get_all()) do
             local offer = state.currentOffer
             if offer ~= nil then
@@ -366,8 +340,15 @@ function module.start(hero_results, seed)
     elseif not sync_available then
         print("肉鸽系统使用单人本地权威模式")
     end
-    register_level_events()
-    start_countdown()
+    runtime = runtime_service.create("rogue:" .. tostring(session_id))
+    if not runtime:register_level_events(state_store.get_all(), on_hero_level) then
+        print("肉鸽系统启动失败：无法注册英雄升级事件")
+        return false
+    end
+    if not start_countdown() then
+        print("肉鸽系统启动失败：无法创建强化倒计时")
+        return false
+    end
     wukong.start(hero_results or {}, session_seed)
     arthas.start(hero_results or {})
     houyi.start(hero_results or {})

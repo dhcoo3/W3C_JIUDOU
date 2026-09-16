@@ -8,6 +8,7 @@ local equipment = require "equipment.main"
 local equipment_instance = require "equipment.instance"
 local courier = require "courier.main"
 local sync = require "mysteryShop.sync"
+local box_result = require "mysteryShop.box_result"
 
 local module = {}
 local started = false
@@ -24,7 +25,6 @@ local processed_uids = {}
 
 local NEUTRAL_PASSIVE_PLAYER_ID = 15
 local DEFAULT_STOCK = 1
-local RESULT_PART_COUNT = 19
 
 --- jass.common 在部分 KKWE 运行时未导出 UNIT_STATE_MANA 常量，
 --- 但 GetUnitState/SetUnitState 仍接受 Warcraft 原生 unitstate 枚举值。
@@ -263,95 +263,19 @@ local function on_consumable_use()
     end
 end
 
-local function join_passives(passives)
-    if passives == nil or #passives == 0 then
-        return "-"
-    end
-    return table.concat(passives, ",")
-end
-
-local function encode_result(event_id, player_id, equipment_data, x, y)
-    return table.concat({
-        "MYSTERY_BOX_RESULT", "2", tostring(event_id), tostring(player_id),
-        tostring(equipment_data.uid), equipment_data.rawcode,
-        equipment_data.templateId ~= nil and equipment_data.templateId ~= "" and equipment_data.templateId or "-",
-        tostring(equipment_data.level), tostring(equipment_data.stats.attack),
-        tostring(equipment_data.stats.health), tostring(equipment_data.stats.armor),
-        tostring(equipment_data.stats.basicAttackBonusPercent or 0), tostring(equipment_data.stats.healthAmplificationPercent or 0),
-        equipment_data.autoSkillId or "-", join_passives(equipment_data.passiveSkillIds),
-        equipment_data.comboSetId or "-", equipment_data.comboPieceId or "-",
-        tostring(math.floor(tonumber(x) or 0)), tostring(math.floor(tonumber(y) or 0)),
-    }, "|")
-end
-
-local function parse_passives(value)
-    local result = {}
-    if value == nil or value == "" or value == "-" then
-        return result
-    end
-    for passive_id in string.gmatch(value, "[^,]+") do
-        if passive_id ~= "-" and passive_id ~= "" then
-            table.insert(result, passive_id)
-        end
-    end
-    return result
-end
-
 local function parse_result(parts)
-    if #parts ~= RESULT_PART_COUNT or parts[1] ~= "MYSTERY_BOX_RESULT" or parts[2] ~= "2" then
+    local result = box_result.decode(parts)
+    if result == nil then
         return nil
     end
-    local event_id = tonumber(parts[3])
-    local player_id = tonumber(parts[4])
-    local uid = tonumber(parts[5])
-    local level = tonumber(parts[8])
-    local attack = tonumber(parts[9])
-    local health = tonumber(parts[10])
-    local armor = tonumber(parts[11])
-    local x = tonumber(parts[18])
-    local y = tonumber(parts[19])
-    if event_id == nil or player_id == nil or uid == nil or level == nil
-        or attack == nil or health == nil or armor == nil or x == nil or y == nil then
+    if processed_events[result.eventId] or processed_uids[result.uid] or equipment_instance.get_by_uid(result.uid) ~= nil then
         return nil
     end
-    event_id = math.floor(event_id)
-    player_id = math.floor(player_id)
-    uid = math.floor(uid)
-    level = math.floor(level)
-    if event_id <= 0 or uid <= 0 or player_id < 0 or player_id > 11 or level < 1 or level > 5 then
-        return nil
-    end
-    if processed_events[event_id] or processed_uids[uid] or equipment_instance.get_by_uid(uid) ~= nil then
-        return nil
-    end
-    local hero = hero_by_player[player_id]
-    local rawcode = parts[6]
-    local item = item_config[rawcode]
-    if not active_player_by_id[player_id] or hero == nil or item == nil or item.isEquipment ~= 1 then
-        return nil
-    end
-    return {
-        eventId = event_id,
-        playerId = player_id,
-        hero = hero,
-        uid = uid,
-        rawcode = rawcode,
-        templateId = parts[7] == "-" and "" or parts[7],
-        level = level,
-        stats = {
-            attack = math.floor(attack),
-            health = math.floor(health),
-            armor = math.floor(armor),
-            basicAttackBonusPercent = tonumber(parts[12]) or 0,
-            healthAmplificationPercent = tonumber(parts[13]) or 0,
-        },
-        autoSkillId = parts[14] == "-" and nil or parts[14],
-        passiveSkillIds = parse_passives(parts[15]),
-        comboSetId = parts[16] == "-" and nil or parts[16],
-        comboPieceId = parts[17] == "-" and nil or parts[17],
-        x = x,
-        y = y,
-    }
+    local hero = hero_by_player[result.playerId]
+    local item = item_config[result.rawcode]
+    if not active_player_by_id[result.playerId] or hero == nil or item == nil or item.isEquipment ~= 1 then return nil end
+    result.hero = hero
+    return result
 end
 
 local function on_sync_message(message, sender_id)
@@ -475,7 +399,7 @@ local function on_sell()
     end
     local x = type(jass.GetUnitX) == "function" and jass.GetUnitX(buyer) or 0
     local y = type(jass.GetUnitY) == "function" and jass.GetUnitY(buyer) or 0
-    sync.broadcast(encode_result(event_sequence, player_id, equipment_data, x, y))
+    sync.broadcast(box_result.encode(event_sequence, player_id, equipment_data, x, y))
 end
 
 local function register_sell_event()

@@ -2,9 +2,9 @@
 --- 本地快捷键只发送请求；房主重新读取物品栏并广播完整合成结果。
 local jass = require "jass.common"
 local input = require "platform.input"
-local config = require "config.items"
 local instance = require "equipment.instance"
 local generator = require "equipment.generator"
+local transaction = require "equipment.transaction"
 
 local module = {}
 local sync_module = nil
@@ -20,14 +20,6 @@ local MERGE_KEY_F2 = 113
 local KEY_DOWN = 1
 local MERGE_SOURCE_HERO = "H"
 local MERGE_SOURCE_COURIER = "C"
-
-local function rawcode_to_id(rawcode)
-    local a, b, c, d = string.byte(rawcode or "", 1, 4)
-    if a == nil or b == nil or c == nil or d == nil then
-        return nil
-    end
-    return a * 0x1000000 + b * 0x10000 + c * 0x100 + d
-end
 
 local function join_passives(passives)
     if passives == nil or #passives == 0 then
@@ -68,67 +60,6 @@ local function report_failure(player_id, reason)
     end
 end
 
-local function remove_material(hero, item_handle)
-    if item_handle == nil then
-        return
-    end
-    instance.unbind_item(item_handle)
-    if type(jass.UnitRemoveItem) == "function" then
-        jass.UnitRemoveItem(hero, item_handle)
-    end
-    if type(jass.RemoveItem) == "function" then
-        jass.RemoveItem(item_handle)
-    end
-end
-
-local function restore_material(hero, slot, equipment)
-    local item_id = rawcode_to_id(equipment.rawcode)
-    if item_id == nil then
-        return false
-    end
-    local item_handle = nil
-    if type(jass.UnitAddItemToSlotById) == "function" then
-        local ok = jass.UnitAddItemToSlotById(hero, item_id, slot)
-        if ok then
-            item_handle = instance.get_item_in_slot(hero, slot)
-        end
-    elseif type(jass.CreateItem) == "function" and type(jass.UnitAddItem) == "function" then
-        item_handle = jass.CreateItem(item_id, jass.GetUnitX(hero), jass.GetUnitY(hero))
-        if item_handle ~= nil then
-            jass.UnitAddItem(hero, item_handle)
-        end
-    end
-    if item_handle == nil then
-        return false
-    end
-    instance.bind_item(item_handle, equipment)
-    return true
-end
-
-local function add_result_to_slot(hero, equipment)
-    local item_id = rawcode_to_id(equipment.rawcode)
-    if item_id == nil then
-        return nil
-    end
-    local item_handle = nil
-    if type(jass.UnitAddItemToSlotById) == "function" then
-        if jass.UnitAddItemToSlotById(hero, item_id, 0) then
-            item_handle = instance.get_item_in_slot(hero, 0)
-        end
-    elseif type(jass.CreateItem) == "function" and type(jass.UnitAddItem) == "function" then
-        item_handle = jass.CreateItem(item_id, jass.GetUnitX(hero), jass.GetUnitY(hero))
-        if item_handle ~= nil and not jass.UnitAddItem(hero, item_handle) then
-            jass.RemoveItem(item_handle)
-            item_handle = nil
-        end
-        item_handle = item_handle or instance.get_item_in_slot(hero, 0)
-    end
-    if item_handle ~= nil then
-        instance.bind_item(item_handle, equipment)
-    end
-    return item_handle
-end
-
 local function handle_request(parts, sender_id)
     if #parts ~= 7 or parts[2] ~= "3" or not module.is_host() then
         return
@@ -152,22 +83,9 @@ local function handle_request(parts, sender_id)
         report_failure(player_id, "找不到合成来源物品栏")
         return
     end
-    local first_item = instance.get_item_in_slot(carrier, 0)
-    local second_item = instance.get_item_in_slot(carrier, 1)
-    local first = first_item and instance.get_by_item(first_item) or nil
-    local second = second_item and instance.get_by_item(second_item) or nil
-    if first == nil or second == nil or first.uid ~= first_uid or second.uid ~= second_uid then
-        report_failure(player_id, "第1、2格装备已变化")
-        return
-    end
-    if first.level ~= second.level or first.level >= 5 then
-        report_failure(player_id, "需要两件同级且低于5级的装备")
-        return
-    end
-    local first_config = config[first.rawcode]
-    local second_config = config[second.rawcode]
-    if first_config == nil or second_config == nil or first_config.mergeable ~= 1 or second_config.mergeable ~= 1 then
-        report_failure(player_id, "材料不是可合成装备")
+    local first, second, reason = transaction.validate_merge_materials(carrier, first_uid, second_uid)
+    if first == nil or second == nil then
+        report_failure(player_id, reason)
         return
     end
     next_merge_uid = next_merge_uid + 1
@@ -206,14 +124,6 @@ local function handle_result(parts)
     if carrier == nil then
         return
     end
-    local first_item = instance.get_item_in_slot(carrier, 0)
-    local second_item = instance.get_item_in_slot(carrier, 1)
-    local first = first_item and instance.get_by_item(first_item) or nil
-    local second = second_item and instance.get_by_item(second_item) or nil
-    if first == nil or second == nil or first.uid ~= first_uid or second.uid ~= second_uid then
-        print("忽略装备合成结果：本地材料状态不一致")
-        return
-    end
     local passive_ids = {}
     if parts[18] ~= "-" and parts[18] ~= "" then
         for passive_id in string.gmatch(parts[18], "[^,]+") do
@@ -237,16 +147,15 @@ local function handle_result(parts)
         comboSetId = parts[19] == "-" and nil or parts[19],
         comboPieceId = parts[20] == "-" and nil or parts[20],
     })
-    remove_material(carrier, first_item)
-    remove_material(carrier, second_item)
-    local result_item = add_result_to_slot(carrier, result)
-    if result_item == nil then
-        restore_material(carrier, 0, first)
-        restore_material(carrier, 1, second)
-        report_failure(player_id, "结果无法放入第1格，材料已尝试恢复")
+    local applied, reason = transaction.apply_merge_result(carrier, first_uid, second_uid, result)
+    if not applied then
+        if reason == "本地材料状态不一致" then
+            print("忽略装备合成结果：" .. reason)
+        else
+            report_failure(player_id, reason)
+        end
         return
     end
-    instance.refresh_inventory(carrier)
     if on_changed ~= nil and source == MERGE_SOURCE_HERO then
         local hero = instance.get_hero_by_player(player_id)
         on_changed(hero, result, "merge")
