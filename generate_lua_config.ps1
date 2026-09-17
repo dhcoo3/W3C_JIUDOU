@@ -395,10 +395,11 @@ function Validate-MonsterExperience {
             throw "每阶必须恰有 60 个普通怪/精英难度变体：阶数=$tier / 实际=$($tierVariantCounts[[string]$tier])"
         }
     }
-    # 六个未扩展表格单位、两名召唤物和后羿的隐藏减速施法马甲与 PVE 变体并存。
-    if ($Units.Count -ne 769 -or ($Units.Count - $variantCount) -ne 9 -or
-        -not $Units.Contains('u0W1') -or -not $Units.Contains('u0E1') -or -not $Units.Contains('u0H1')) {
-        throw "单位表应包含 760 个 PVE 变体、6 个未扩展表格单位、u0W1/u0E1 召唤物和 u0H1 施法马甲，实际单位数=$($Units.Count)"
+    # 六个未扩展表格单位、两名召唤物和后羿的施法/视觉箭马甲与 PVE 变体并存。
+    if ($Units.Count -ne 770 -or ($Units.Count - $variantCount) -ne 10 -or
+        -not $Units.Contains('u0W1') -or -not $Units.Contains('u0E1') -or
+        -not $Units.Contains('u0H1') -or -not $Units.Contains('u0H2')) {
+        throw "单位表应包含 760 个 PVE 变体、6 个未扩展表格单位、u0W1/u0E1 召唤物和 u0H1/u0H2 后羿马甲，实际单位数=$($Units.Count)"
     }
     foreach ($base in $baseRawcodes) {
         for ($mode = 1; $mode -le 2; $mode++) {
@@ -1629,6 +1630,9 @@ function Apply-RoguelikeObjectOverrides {
         if (-not $AbilityTable.Sections.Contains($rawcode)) { throw "后羿技能物编缺失：$rawcode" }
     }
     $AbilityTable.Sections['A0N1']['_parent'] = 'AOsh'
+    # AOsh inherits ShockwaveMissile.mdl. Q only uses its point-target cast shell;
+    # its visible projectile is the Lua-driven u0H2 ExplosiveBolt.
+    $AbilityTable.Sections['A0N1']['Missileart'] = ''
     $AbilityTable.Sections['A0N1']['DataA'] = @(0, 0, 0)
     $AbilityTable.Sections['A0N2']['_parent'] = 'ANcl'
     foreach ($field in @('DataA', 'DataD', 'DataE')) { $AbilityTable.Sections['A0N2'][$field] = @(0, 0, 0) }
@@ -1802,6 +1806,36 @@ function Apply-RoguelikeObjectOverrides {
         hideHeroBar = 1
         modelScale = 0.01
     }
+    $UnitTable.Sections['u0H2'] = [ordered]@{
+        _parent = 'hfoo'
+        Name = '贯日箭视觉马甲'
+        Tip = '贯日箭视觉马甲'
+        Ubertip = '后羿贯日箭的移动特效载体。'
+        file = 'war3mapModel\houyi_q_arrow.mdx'
+        HP = 1
+        mana0 = 0
+        manaN = 0
+        def = 0
+        spd = 0
+        collision = 0
+        goldcost = 0
+        lumbercost = 0
+        abilList = 'Aloc'
+        cool1 = 1
+        rangeN1 = 0
+        weapsOn = 0
+        dice1 = 0
+        sides1 = 0
+        dmgplus1 = 0
+        bountydice = 0
+        bountysides = 0
+        bountyplus = 0
+        goldRep = 0
+        points = 0
+        dropItems = 0
+        hideHeroBar = 1
+        modelScale = 1
+    }
 }
 
 function Format-SkillDamageLines {
@@ -1924,7 +1958,7 @@ function New-RoguelikeConfig {
             maxLevel = [int](Get-RoguelikeRequiredField $source 'maxLevel' "effects/$effectId")
             weight = [int](Get-RoguelikeRequiredField $source 'weight' "effects/$effectId")
         }
-        if ($effect.maxLevel -ne 3 -or $effect.weight -le 0) {
+        if ($effect.maxLevel -lt 1 -or $effect.maxLevel -gt 3 -or $effect.weight -le 0) {
             throw "肉鸽效果等级或权重无效：$effectId"
         }
         if ($type -eq 'Skill') {
@@ -1973,6 +2007,14 @@ function New-RoguelikeConfig {
             throw "后羿每个技能必须恰有两个肉鸽效果：$skill"
         }
     }
+    $houyiQProjectileEffect = $effects['R_H_Q_TARGET']
+    if ($null -eq $houyiQProjectileEffect -or $houyiQProjectileEffect.modifierKey -ne 'projectile_count_add' -or $houyiQProjectileEffect.maxLevel -ne 3 -or ((@($houyiQProjectileEffect.values) -join ',') -ne '1,2,3')) {
+        throw '后羿 Q 分光箭肉鸽配置无效'
+    }
+    $houyiQRepeatEffect = $effects['R_H_Q_DAMAGE']
+    if ($null -eq $houyiQRepeatEffect -or $houyiQRepeatEffect.modifierKey -ne 'repeat_count_add' -or $houyiQRepeatEffect.maxLevel -ne 2 -or ((@($houyiQRepeatEffect.values) -join ',') -ne '1,2,2')) {
+        throw '后羿 Q 余晖复射肉鸽配置无效'
+    }
     if ($commonIds.Count -ne 8) { throw "首版通用肉鸽必须恰有 8 个，实际=$($commonIds.Count)" }
 
     $skillRuntime = [ordered]@{}
@@ -1997,6 +2039,18 @@ function New-RoguelikeConfig {
             $skillRuntime[$hero][$skill][$key] = [int](Get-RoguelikeRequiredField $source 'scalarValue' "skill_runtime/$runtimeId")
         }
     }
+
+    # Q's visible arrow is Lua-driven. Keep its flight distance synchronized with
+    # the three native casting ranges in ability.xlsx, which is the sole authoring surface.
+    $houyiQNativeRanges = @($Abilities['A0N1']['Rng'])
+    $houyiQLevelCount = [int]$Abilities['A0N1']['levels']
+    if ($houyiQNativeRanges.Count -ne $houyiQLevelCount -or $houyiQLevelCount -ne 3) {
+        throw '后羿 Q 原生射程等级数无效：H0N0/A0N1'
+    }
+    foreach ($range in $houyiQNativeRanges) {
+        if ([int]$range -lt 1) { throw '后羿 Q 原生射程必须为正整数：H0N0/A0N1' }
+    }
+    $skillRuntime['H0N0']['A0N1']['range'] = @($houyiQNativeRanges | ForEach-Object { [int]$_ })
 
     $damageAttributes = @('primary')
     $formulaRequirements = @(
@@ -2062,7 +2116,7 @@ function New-RoguelikeConfig {
     }
     $houyiRuntime = $skillRuntime['H0N0']
     foreach ($requirement in @(
-        @{ skill = 'A0N1'; keys = @('range', 'width', 'targetCount') },
+        @{ skill = 'A0N1'; keys = @('range', 'damageRadius', 'projectileSpeed') },
         @{ skill = 'A0N2'; keys = @('range', 'projectileCount', 'projectileIntervalHundredths', 'bounceRange', 'bounceCount') },
         @{ skill = 'A0N3'; keys = @('maxStacks', 'duration', 'procArea', 'slowPercent', 'slowDurationHundredths', 'itemProcDamagePercent', 'itemProcAreaAdd') },
         @{ skill = 'A0N4'; keys = @('finalDamageMultiplierTenth', 'area', 'outerRadius', 'projectileCount', 'normalArea', 'finalArea', 'durationHundredths') }

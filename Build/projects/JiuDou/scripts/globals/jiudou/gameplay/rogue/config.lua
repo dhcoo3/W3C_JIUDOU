@@ -29,7 +29,8 @@ function module.validate()
                 if not is_integer(value) then table.insert(errors, "效果数值必须为整数：" .. tostring(effect_id)) end
             end
         end
-        if effect.maxLevel ~= 3 or not is_integer(effect.weight) or effect.weight <= 0 then
+        if not is_integer(effect.maxLevel) or effect.maxLevel < 1 or effect.maxLevel > 3
+            or not is_integer(effect.weight) or effect.weight <= 0 then
             table.insert(errors, "效果等级或权重无效：" .. tostring(effect_id))
         end
         if effect.type == "Skill" then
@@ -45,6 +46,7 @@ function module.validate()
     end
     for _, hero_skills in ipairs({
         {hero = "H0W0", name = "悟空", skills = {"A0W1", "A0W2", "A0W3", "A0W4"}},
+        {hero = "H0N0", name = "后羿", skills = {"A0N1", "A0N2", "A0N3", "A0N4"}},
         {hero = "H0E0", name = "阿尔萨斯", skills = {"A0E1", "A0E2", "A0E3", "A0E4"}},
     }) do
         for _, rawcode in ipairs(hero_skills.skills) do

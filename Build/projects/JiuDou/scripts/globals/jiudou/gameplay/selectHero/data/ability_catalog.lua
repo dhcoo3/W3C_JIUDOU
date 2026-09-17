@@ -25,7 +25,7 @@ local presentation_by_rawcode = {
     A0W2 = {damage = "由 Lua 结算", range = "突进 700；落点 250", cooldown = "16 / 14 / 12 秒"},
     A0W3 = {damage = "无直接伤害", range = "自身", cooldown = "被动"},
     A0W4 = {damage = "召唤伤害由 Lua 结算", range = "自身", cooldown = "被动"},
-    A0N1 = {range = "900；宽度 96；最多 4 个", cooldown = "12 / 11 / 10 秒"},
+    A0N1 = {range = "900；飞行扫掠半径 100", cooldown = "12 / 11 / 10 秒"},
     A0N2 = {range = "750；每箭弹射 350", cooldown = "9 / 8 / 7 秒"},
     A0N3 = {damage = "日痕爆发由 Lua 结算", range = "日痕爆发范围 180", cooldown = "被动"},
     A0N4 = {damage = "普通箭与第九箭伤害由 Lua 结算", range = "落点半径 360", cooldown = "70 / 60 / 50 秒"},

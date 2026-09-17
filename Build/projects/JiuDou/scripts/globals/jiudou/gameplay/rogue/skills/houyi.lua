@@ -23,7 +23,10 @@ local clock = 0
 local Q_RAWCODE, W_RAWCODE, E_RAWCODE, R_RAWCODE = "A0N1", "A0N2", "A0N3", "A0N4"
 local Q_ID, W_ID, E_ID, R_ID = nil, nil, nil, nil
 local SLOW_DUMMY_ID = nil
+local Q_VISUAL_DUMMY_ID = nil
 local SUN_BOW_ID = nil
+local Q_TICK_SECONDS = 0.03
+local Q_REPEAT_SECONDS = 0.15
 local BURNING_ARROW_MODEL = "Abilities\\Weapons\\SearingArrow\\SearingArrowMissile.mdl"
 local NORMAL_ARROW_MODEL = "Abilities\\Weapons\\Arrow\\ArrowMissile.mdl"
 local MARK_MODEL = "Abilities\\Spells\\NightElf\\Immolation\\ImmolationTarget.mdl"
@@ -217,6 +220,18 @@ local function damage_area_with_mark(hero, x, y, radius, amount, cast_hits)
     end
 end
 
+local function destroy_q_arrow_visual(arrow)
+    if arrow == nil or arrow.visualFinished then return end
+    arrow.visualFinished = true
+    if arrow.effect ~= nil then destroy_effect(arrow.effect) end
+    if arrow.dummy ~= nil and type(jass.RemoveUnit) == "function" then jass.RemoveUnit(arrow.dummy) end
+    if arrow.timer ~= nil then
+        if type(jass.PauseTimer) == "function" then jass.PauseTimer(arrow.timer) end
+        if type(jass.DestroyTimer) == "function" then jass.DestroyTimer(arrow.timer) end
+        arrow.timer = nil
+    end
+end
+
 local function cancel_cast(hero, cast)
     if cast == nil or cast.finished then return end
     cast.finished = true
@@ -225,7 +240,94 @@ local function cancel_cast(hero, cast)
         if type(jass.DestroyTimer) == "function" then jass.DestroyTimer(cast.timer) end
         cast.timer = nil
     end
+    if cast.arrows ~= nil then
+        local arrows = {}
+        for arrow in pairs(cast.arrows) do table.insert(arrows, arrow) end
+        for _, arrow in ipairs(arrows) do destroy_q_arrow_visual(arrow) end
+        cast.arrows = {}
+    end
     state_for(hero).casts[cast] = nil
+end
+
+local function finish_q_arrow(cast, arrow)
+    if arrow == nil or arrow.finished then return end
+    arrow.finished = true
+    destroy_q_arrow_visual(arrow)
+    cast.arrows[arrow] = nil
+    if not cast.finished and cast.roundsRemaining <= 0 and next(cast.arrows) == nil then
+        cancel_cast(cast.hero, cast)
+    end
+end
+
+local function q_facing_degrees(dx, dy)
+    local radians = type(jass.Atan2) == "function" and jass.Atan2(dy, dx) or math.atan(dy, dx)
+    return radians * 180 / math.pi
+end
+
+local function q_damage_arrow(arrow)
+    for _, target in ipairs(sorted_enemies(arrow.cast.hero, arrow.x, arrow.y, arrow.cast.damageRadius)) do
+        local target_id = handle_id(target)
+        if not arrow.hitTargets[target_id] then
+            arrow.hitTargets[target_id] = true
+            damage_target(arrow.cast.hero, target, arrow.cast.amount)
+            add_day_mark(arrow.cast.hero, target, arrow.cast.marked)
+        end
+    end
+end
+
+local function fire_q_arrow(cast, origin_x, origin_y, dx, dy)
+    local arrow = {
+        cast = cast, x = origin_x, y = origin_y, dx = dx, dy = dy,
+        travelled = 0, hitTargets = {}, dummy = nil, timer = nil,
+    }
+    cast.arrows[arrow] = true
+    if Q_VISUAL_DUMMY_ID ~= nil and type(jass.CreateUnit) == "function" then
+        arrow.dummy = jass.CreateUnit(jass.GetOwningPlayer(cast.hero), Q_VISUAL_DUMMY_ID,
+            origin_x, origin_y, q_facing_degrees(dx, dy))
+    end
+    if type(jass.CreateTimer) ~= "function" or type(jass.TimerStart) ~= "function" then
+        q_damage_arrow(arrow)
+        return finish_q_arrow(cast, arrow)
+    end
+    arrow.timer = jass.CreateTimer()
+    jass.TimerStart(arrow.timer, Q_TICK_SECONDS, true, function()
+        if cast.finished or not is_alive(cast.hero) then return finish_q_arrow(cast, arrow) end
+        local distance = math.min(cast.step, cast.range - arrow.travelled)
+        arrow.x, arrow.y = arrow.x + arrow.dx * distance, arrow.y + arrow.dy * distance
+        arrow.travelled = arrow.travelled + distance
+        if arrow.dummy ~= nil then
+            -- SetUnitPosition refreshes the visible Locust carrier on Warcraft III 1.27.
+            -- SetUnitX/Y remain as a compatibility fallback for stripped native tables.
+            if type(jass.SetUnitPosition) == "function" then
+                jass.SetUnitPosition(arrow.dummy, arrow.x, arrow.y)
+            else
+                if type(jass.SetUnitX) == "function" then jass.SetUnitX(arrow.dummy, arrow.x) end
+                if type(jass.SetUnitY) == "function" then jass.SetUnitY(arrow.dummy, arrow.y) end
+            end
+        end
+        q_damage_arrow(arrow)
+        if arrow.travelled >= cast.range then finish_q_arrow(cast, arrow) end
+    end)
+end
+
+local function fire_q_round(cast)
+    if cast.finished or not is_alive(cast.hero) then return cancel_cast(cast.hero, cast) end
+    local origin_x, origin_y = jass.GetUnitX(cast.hero), jass.GetUnitY(cast.hero)
+    for _, offset in ipairs(cast.offsets) do
+        local cosine, sine = math.cos(offset), math.sin(offset)
+        fire_q_arrow(cast, origin_x, origin_y,
+            cast.baseDx * cosine - cast.baseDy * sine,
+            cast.baseDx * sine + cast.baseDy * cosine)
+    end
+    cast.roundsRemaining = cast.roundsRemaining - 1
+    if cast.roundsRemaining <= 0 then
+        if cast.timer ~= nil then
+            if type(jass.PauseTimer) == "function" then jass.PauseTimer(cast.timer) end
+            if type(jass.DestroyTimer) == "function" then jass.DestroyTimer(cast.timer) end
+            cast.timer = nil
+        end
+        if next(cast.arrows) == nil then cancel_cast(cast.hero, cast) end
+    end
 end
 
 local function cast_q(hero)
@@ -233,39 +335,35 @@ local function cast_q(hero)
     local level = ability_level(hero, Q_ID)
     if level <= 0 then return end
     local start_x, start_y = jass.GetUnitX(hero), jass.GetUnitY(hero)
-    local end_x = type(jass.GetSpellTargetX) == "function" and jass.GetSpellTargetX() or start_x
-    local end_y = type(jass.GetSpellTargetY) == "function" and jass.GetSpellTargetY() or start_y
-    local dx, dy = end_x - start_x, end_y - start_y
-    local distance = math.sqrt(dx * dx + dy * dy)
-    local range = math.max(1, math.floor(tonumber(q_runtime.range) or 900))
-    if distance <= 0.01 then dx, dy, distance = 1, 0, 1 end
-    if distance > range then
-        end_x, end_y = start_x + dx * range / distance, start_y + dy * range / distance
-        dx, dy, distance = end_x - start_x, end_y - start_y, range
+    local target_x = type(jass.GetSpellTargetX) == "function" and jass.GetSpellTargetX() or start_x
+    local target_y = type(jass.GetSpellTargetY) == "function" and jass.GetSpellTargetY() or start_y
+    local dx, dy = target_x - start_x, target_y - start_y
+    local length = math.sqrt(dx * dx + dy * dy)
+    if length <= 0.01 then
+        local facing = type(jass.GetUnitFacing) == "function" and jass.GetUnitFacing(hero) or 0
+        local radians = facing * math.pi / 180
+        dx, dy, length = math.cos(radians), math.sin(radians), 1
     end
-    local width = math.max(1, math.floor(tonumber(q_runtime.width) or 96))
-    local candidates = {}
-    for _, target in ipairs(sorted_enemies(hero, start_x, start_y, distance + width)) do
-        local tx, ty = jass.GetUnitX(target) - start_x, jass.GetUnitY(target) - start_y
-        local projection = (tx * dx + ty * dy) / distance
-        local perpendicular = math.abs(tx * dy - ty * dx) / distance
-        if projection >= 0 and projection <= distance and perpendicular <= width / 2 then
-            table.insert(candidates, {target = target, projection = projection, id = handle_id(target)})
-        end
-    end
-    table.sort(candidates, function(left, right)
-        if left.projection ~= right.projection then return left.projection < right.projection end
-        return left.id < right.id
-    end)
-    play_arrow(BURNING_ARROW_MODEL, start_x, start_y, end_x, end_y)
-    local amount = calculate_damage(hero, q_runtime.damageAttribute,
-        list_value(q_runtime.damageMultiplierTenth, level), skill_value(hero, Q_RAWCODE, "damage_percent_add"))
-    local marked = {}
-    local limit = math.max(1, math.floor(tonumber(q_runtime.targetCount) or 4) + skill_value(hero, Q_RAWCODE, "target_count_add"))
-    for index = 1, math.min(limit, #candidates) do
-        local target = candidates[index].target
-        damage_target(hero, target, amount)
-        add_day_mark(hero, target, marked)
+    local extra_arrows = math.max(0, math.min(3, skill_value(hero, Q_RAWCODE, "projectile_count_add")))
+    local offsets = {0}
+    if extra_arrows >= 1 then table.insert(offsets, math.pi / 6) end
+    if extra_arrows >= 2 then table.insert(offsets, -math.pi / 6) end
+    if extra_arrows >= 3 then table.insert(offsets, math.pi / 3) end
+    local configured_range = list_value(q_runtime.range, level)
+    local range = math.max(1, configured_range > 0 and configured_range or 900)
+    local speed = math.max(1, math.floor(tonumber(q_runtime.projectileSpeed) or 1500))
+    local cast = {
+        hero = hero, baseDx = dx / length, baseDy = dy / length, offsets = offsets,
+        range = range, step = speed * Q_TICK_SECONDS,
+        damageRadius = math.max(0, math.floor(tonumber(q_runtime.damageRadius) or 100)),
+        amount = calculate_damage(hero, q_runtime.damageAttribute, list_value(q_runtime.damageMultiplierTenth, level)),
+        marked = {}, arrows = {}, roundsRemaining = 1 + math.max(0, skill_value(hero, Q_RAWCODE, "repeat_count_add")),
+    }
+    state_for(hero).casts[cast] = true
+    fire_q_round(cast)
+    if not cast.finished and cast.roundsRemaining > 0 and type(jass.CreateTimer) == "function" then
+        cast.timer = jass.CreateTimer()
+        jass.TimerStart(cast.timer, Q_REPEAT_SECONDS, true, function() fire_q_round(cast) end)
     end
 end
 
@@ -425,6 +523,7 @@ function module.start(hero_results)
     Q_ID, W_ID, E_ID, R_ID = rawcode_to_integer(Q_RAWCODE), rawcode_to_integer(W_RAWCODE),
         rawcode_to_integer(E_RAWCODE), rawcode_to_integer(R_RAWCODE)
     SLOW_DUMMY_ID = rawcode_to_integer("u0H1")
+    Q_VISUAL_DUMMY_ID = rawcode_to_integer("u0H2")
     SUN_BOW_ID = rawcode_to_integer("I0XN")
     for _, result in ipairs(hero_results or {}) do
         if result.unit ~= nil and result.hero and result.hero.rawcode == "H0N0" then

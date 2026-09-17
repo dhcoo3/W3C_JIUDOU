@@ -1,6 +1,7 @@
 # Codex/本地临时文件
 .codex_tmp/
 $stage/
+outputs/
 
 # 操作系统与编辑器文件
 Thumbs.db
@@ -32,3 +33,5 @@ Build/projects/JiuDou/scripts/globals/config/.generate-staging-*/
 .env
 .env.*
 !.env.example
+
+Build/vendor
