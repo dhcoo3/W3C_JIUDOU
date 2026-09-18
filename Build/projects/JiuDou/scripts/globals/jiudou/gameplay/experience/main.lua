@@ -309,6 +309,21 @@ end
 function module.get_snapshot(hero)
     return copy_state(states_by_hero[hero])
 end
+---训练 GM 使用的精确经验发放；不经过经验加成公式。
+---@param player_id integer
+---@param amount integer
+---@return boolean granted
+function module.grant(player_id, amount)
+    if not started or not sync.is_host() or not valid_player_id(player_id)
+        or not is_integer(amount) or amount < 1 then
+        return false
+    end
+    local state = states_by_player[player_id]
+    if state == nil or state.level >= max_level() then return false end
+    return broadcast_state_after_update(player_id, state.totalExp + amount)
+end
+
+
 
 function module.get_exp_bonus(player_id)
     return get_bonus(states_by_player[player_id])
@@ -350,7 +365,12 @@ function module.start(selection, hero_results)
         started, sync_available, death_trigger = false, false, nil
         states_by_player, states_by_hero, hero_players, active_players = {}, {}, {}, {}
     end) or nil
-    local difficulty, message = monster_config.create_difficulty(selection)
+    local difficulty, message
+    if type(selection) == "table" and selection.category == "TRAINING" then
+        difficulty = monster_config.create_training_difficulty()
+    else
+        difficulty, message = monster_config.create_difficulty(selection)
+    end
     if difficulty == nil then
         print("经验系统启动失败：" .. tostring(message))
         return false

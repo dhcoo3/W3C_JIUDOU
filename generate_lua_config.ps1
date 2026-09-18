@@ -396,9 +396,10 @@ function Validate-MonsterExperience {
         }
     }
     # 六个未扩展表格单位、两名召唤物和后羿的施法/视觉箭马甲与 PVE 变体并存。
-    if ($Units.Count -ne 770 -or ($Units.Count - $variantCount) -ne 10 -or
+    if ($Units.Count -ne 771 -or ($Units.Count - $variantCount) -ne 11 -or
         -not $Units.Contains('u0W1') -or -not $Units.Contains('u0E1') -or
-        -not $Units.Contains('u0H1') -or -not $Units.Contains('u0H2')) {
+        -not $Units.Contains('u0H1') -or -not $Units.Contains('u0H2') -or
+        -not $Units.Contains('T0D0')) {
         throw "单位表应包含 760 个 PVE 变体、6 个未扩展表格单位、u0W1/u0E1 召唤物和 u0H1/u0H2 后羿马甲，实际单位数=$($Units.Count)"
     }
     foreach ($base in $baseRawcodes) {
@@ -1547,6 +1548,7 @@ function Apply-CombatUnitTypeOverrides {
         $isCombatUnit = (
             $rawcode -in @('u0W1', 'u0E1') -or
             $rawcode -in @('G0M1', 'X0M1') -or
+            $rawcode -eq 'T0D0' -or
             $UnitTable.Sections[$rawcode].Contains('baseUnitId') -or
             $rawcode -match '^H[0-9A-Z]{3}$' -or
             $rawcode -match '^[NEB][0-9A-Z]{3}$'
@@ -1570,6 +1572,7 @@ function Assert-CombatUnitTypes {
         $isCombatUnit = (
             $rawcode -in @('u0W1', 'u0E1') -or
             $rawcode -in @('G0M1', 'X0M1') -or
+            $rawcode -eq 'T0D0' -or
             $Units[$rawcode].Contains('baseUnitId') -or
             $rawcode -match '^H[0-9A-Z]{3}$' -or
             $rawcode -match '^[NEB][0-9A-Z]{3}$'

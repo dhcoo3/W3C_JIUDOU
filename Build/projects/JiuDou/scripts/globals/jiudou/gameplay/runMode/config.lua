@@ -2,16 +2,17 @@
 --- 负责模式枚举、显示名称和模式结果的序列化校验。
 local M = {}
 
----@alias ModeCategory "PVE"|"PVP"
+---@alias ModeCategory "PVE"|"PVP"|"TRAINING"
 
 ---@class ModeSelection
----@field category ModeCategory 大类：PVE 或 PVP
+---@field category ModeCategory 大类：PVE、PVP 或训练
 ---@field modeId integer 具体模式编号
 ---@field name string 模式中文名称
 ---@field level integer|nil PVE 等级；PVP 固定为空
 
 M.CATEGORY_PVE = "PVE"
 M.CATEGORY_PVP = "PVP"
+M.CATEGORY_TRAINING = "TRAINING"
 M.LEVEL_MIN = 1
 M.LEVEL_MAX = 10
 
@@ -30,6 +31,7 @@ M.MODE_ID = {
     PVP_2V2 = 2,
     PVP_3V3 = 3,
     PVP_5V5 = 4,
+    TRAINING_SOLO = 1,
 }
 
 local mode_names = {
@@ -42,6 +44,9 @@ local mode_names = {
         [M.MODE_ID.PVP_2V2] = "2V2",
         [M.MODE_ID.PVP_3V3] = "3V3",
         [M.MODE_ID.PVP_5V5] = "5V5",
+    },
+    [M.CATEGORY_TRAINING] = {
+        [M.MODE_ID.TRAINING_SOLO] = "训练模式",
     },
 }
 
@@ -80,6 +85,10 @@ function M.validate(selection)
     elseif selection.category == M.CATEGORY_PVP then
         if selection.level ~= nil then
             return false, "PVP 模式不能携带等级"
+        end
+    elseif selection.category == M.CATEGORY_TRAINING then
+        if selection.level ~= nil then
+            return false, "训练模式不能携带等级"
         end
     else
         return false, "模式类别无效"
@@ -135,8 +144,8 @@ function M.decode(data)
         return nil, message
     end
 
-    if category == M.CATEGORY_PVP and level ~= 0 then
-        return nil, "PVP 同步数据的等级必须为 0"
+    if (category == M.CATEGORY_PVP or category == M.CATEGORY_TRAINING) and level ~= 0 then
+        return nil, "非 PVE 同步数据的等级必须为 0"
     end
 
     return selection, nil

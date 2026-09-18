@@ -449,12 +449,18 @@ function module.grant_refresh_count(player_id, amount)
     return true
 end
 
-function module.debug_force_offer(player_id)
+---正式发放一次肉鸽三选一；由训练 GM 等已同步玩法入口调用。
+function module.grant_offer(player_id)
     local state = state_store.get_by_player_id(player_id)
     if state == nil or not sync.is_host() then return false end
     state.pendingRewards = state.pendingRewards + 1
     open_next_offer(state)
     return true
+end
+
+---兼容旧调试命令。
+function module.debug_force_offer(player_id)
+    return module.grant_offer(player_id)
 end
 
 function module.debug_timeout(player_id)

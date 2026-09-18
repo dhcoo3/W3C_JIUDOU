@@ -21,6 +21,19 @@ local function is_host(player)
     return jass.GetPlayerId(player) == HOST_PLAYER_ID
 end
 
+---训练模式只允许一个真实人类玩家进入；这里仅控制入口，选将流程还会再次校验。
+local function is_single_human_player()
+    local count = 0
+    for player_id = 0, 11 do
+        local player = jass.Player(player_id)
+        if jass.GetPlayerSlotState(player) == jass.PLAYER_SLOT_STATE_PLAYING
+            and jass.GetPlayerController(player) == jass.MAP_CONTROL_USER then
+            count = count + 1
+        end
+    end
+    return count == 1
+end
+
 local function display_dialog(dialog, visible)
     jass.DialogDisplay(jass.Player(HOST_PLAYER_ID), dialog, visible)
 end
@@ -74,6 +87,11 @@ show_root = function()
     jass.DialogSetMessage(current_dialog, "请选择游戏模式")
     add_button("PVE", show_pve)
     add_button("PVP", show_pvp)
+    if is_single_human_player() then
+        add_button("训练模式", function()
+            publish_selection(config.CATEGORY_TRAINING, config.MODE_ID.TRAINING_SOLO, nil)
+        end)
+    end
     bind_dialog_event()
     display_dialog(current_dialog, true)
 end

@@ -50,6 +50,9 @@ local hero_sources = {}
 local tracked_heroes = {}
 local last_hero_life = {}
 local pending_heal_fraction = {}
+local tracked_recovery_targets = {}
+local last_recovery_life = {}
+local pending_recovery_fraction = {}
 local first_damage_logged = false
 ---@type DamageNumberEntry[]
 local pool = {}
@@ -195,9 +198,35 @@ local function sample_hero_recovery()
     end
 end
 
+local function sample_recovery_targets()
+    if type(jass.GetUnitState) ~= "function" or jass.UNIT_STATE_LIFE == nil then
+        return
+    end
+
+    for target_id, target in pairs(tracked_recovery_targets) do
+        local current = math.max(0.0, tonumber(jass.GetUnitState(target, jass.UNIT_STATE_LIFE)) or 0.0)
+        local previous = last_recovery_life[target_id]
+        if previous ~= nil then
+            local delta = current - previous
+            if delta > 0.0001 and current > 0.405 then
+                local total = delta + (pending_recovery_fraction[target_id] or 0.0)
+                local amount = math.floor(total + 0.0001)
+                pending_recovery_fraction[target_id] = total - amount
+                if amount > 0 then
+                    show_healing(target, amount)
+                end
+            elseif delta < -0.0001 then
+                pending_recovery_fraction[target_id] = 0.0
+            end
+        end
+        last_recovery_life[target_id] = current
+    end
+end
+
 local function update_pool()
     elapsed_seconds = elapsed_seconds + UPDATE_INTERVAL_SECONDS
     sample_hero_recovery()
+    sample_recovery_targets()
     for _, entry in ipairs(pool) do
         if entry.active then
             if elapsed_seconds >= entry.expiresAt then
@@ -242,6 +271,35 @@ end
 ---@return boolean registered 是否成功注册或已注册
 function module.register_target(target)
     return damage_service.register_target(target)
+end
+
+--- Register a unit for recovery floating text. Initial life is recorded to avoid spawn noise.
+---@param target unit unit handle
+---@return boolean registered whether registration succeeded
+function module.register_recovery_target(target)
+    if not started or target == nil or type(jass.GetHandleId) ~= "function"
+        or type(jass.GetUnitState) ~= "function" or jass.UNIT_STATE_LIFE == nil then
+        return false
+    end
+    local target_id = jass.GetHandleId(target)
+    if target_id == nil then return false end
+    tracked_recovery_targets[target_id] = target
+    last_recovery_life[target_id] = math.max(0.0,
+        tonumber(jass.GetUnitState(target, jass.UNIT_STATE_LIFE)) or 0.0)
+    pending_recovery_fraction[target_id] = 0.0
+    return true
+end
+
+---@param target unit unit handle
+---@return boolean unregistered whether the target was registered
+function module.unregister_recovery_target(target)
+    if target == nil or type(jass.GetHandleId) ~= "function" then return false end
+    local target_id = jass.GetHandleId(target)
+    if target_id == nil or tracked_recovery_targets[target_id] == nil then return false end
+    tracked_recovery_targets[target_id] = nil
+    last_recovery_life[target_id] = nil
+    pending_recovery_fraction[target_id] = nil
+    return true
 end
 
 --- 在指定世界坐标显示金币获得飘字。
@@ -306,6 +364,7 @@ function module.start(hero_results)
         started, update_timer = false, nil
         elapsed_seconds, next_pool_index, display_sequence = 0.0, 1, 0
         hero_sources, tracked_heroes, last_hero_life, pool = {}, {}, {}, {}
+        tracked_recovery_targets, last_recovery_life, pending_recovery_fraction = {}, {}, {}
     end) or nil
     if not create_pool() or not damage_service.start(hero_results) then
         print("伤害飘字未启动：对象池或受伤事件创建失败")

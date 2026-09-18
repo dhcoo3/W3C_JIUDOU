@@ -512,5 +512,17 @@ function module.create_difficulty(selection)
     return difficulty, nil
 end
 
+---训练场使用困难模式最高等级的怪物变体，但不会启动普通刷怪调度。
+---@return MonsterDifficulty difficulty
+function module.create_training_difficulty()
+    local difficulty = {
+        modeId = mode_config.MODE_ID.PVE_HARD,
+        level = mode_config.LEVEL_MAX,
+        variantIndex = (mode_config.MODE_ID.PVE_HARD - 1) * 10 + mode_config.LEVEL_MAX,
+    }
+    module.current_difficulty = difficulty
+    return difficulty
+end
+
 JiuDou.publish("gameplay.monster.config", module)
 return module

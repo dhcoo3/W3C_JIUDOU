@@ -16,6 +16,7 @@ local damage_service = JiuDou.module("gameplay.combat.damage")
 local hero_stats = JiuDou.module("gameplay.hero.stats")
 local attribute_ui = JiuDou.module("gameplay.hero.ui.attributes")
 local attribute_tooltip = JiuDou.module("gameplay.hero.ui.attribute_tooltip")
+local training = JiuDou.module("gameplay.training.main")
 
 local M = {}
 local SYNC_PREFIX = "JiuDouMode"
@@ -139,17 +140,17 @@ local function start_pve_staged(selection, hero_results, monster_seed)
         end
     end)
     table.insert(tasks, function()
-        if not gold.start(selection, hero_results) then
+        if selection.category == config.CATEGORY_PVE and not gold.start(selection, hero_results) then
             print("金币系统未能启动或已经启动")
         end
     end)
     table.insert(tasks, function()
-        if not equipment.start(hero_results, monster_seed) then
+        if selection.category == config.CATEGORY_PVE and not equipment.start(hero_results, monster_seed) then
             print("装备系统未能启动或已经启动")
         end
     end)
     table.insert(tasks, function()
-        if not mystery_shop.start(hero_results) then
+        if selection.category == config.CATEGORY_PVE and not mystery_shop.start(hero_results) then
             print("神秘商店未能启动或已经启动")
         end
     end)
@@ -158,9 +159,14 @@ local function start_pve_staged(selection, hero_results, monster_seed)
             print("肉鸽系统未能启动或已经启动")
         end
     end)
+    table.insert(tasks, function()
+        if selection.category == config.CATEGORY_TRAINING and not training.start(hero_results) then
+            print("训练场或 GM 面板未能启动")
+        end
+    end)
     -- Spawn monsters last, after all hero-side state and event handlers are ready.
     table.insert(tasks, function()
-        if not monster.start(selection, hero_results, monster_seed) then
+        if selection.category == config.CATEGORY_PVE and not monster.start(selection, hero_results, monster_seed) then
             print("PVE 刷怪系统未能启动或已经启动")
         end
     end)
@@ -207,11 +213,11 @@ local function start_game_mode(selection, hero_results, monster_seed)
         tostring(selection.level or "无")
     ))
 
-    if selection.category == config.CATEGORY_PVE then
+    if selection.category == config.CATEGORY_PVE or selection.category == config.CATEGORY_TRAINING then
         if lifecycle ~= nil then
-            lifecycle.begin("pve:" .. tostring(monster_seed or 0))
+            lifecycle.begin(string.lower(selection.category) .. ":" .. tostring(monster_seed or 0))
         end
-        print(string.format("PVE 英雄选择完成：%d 名玩家已创建英雄", #(hero_results or {})))
+        print(string.format("%s 英雄选择完成：%d 名玩家已创建英雄", selection.name, #(hero_results or {})))
         change_phase("prepare", {
             selection = selection,
             hero_results = hero_results,
@@ -241,7 +247,7 @@ local function apply_selection(selection)
 
     selection_applied = true
     dialog.close()
-    if selection.category == config.CATEGORY_PVE then
+    if selection.category == config.CATEGORY_PVE or selection.category == config.CATEGORY_TRAINING then
         change_phase("hero_select", selection)
         if events ~= nil then
             events.emit("mode.selected", selection)
@@ -251,9 +257,9 @@ local function apply_selection(selection)
             show_local_status("属性系统准备完成，进入英雄选择")
             local ok, started_or_error = pcall(select_hero.start, selection, start_game_mode)
             if not ok then
-                print("PVE 选将流程异常：" .. tostring(started_or_error))
+                print("选将流程异常：" .. tostring(started_or_error))
             elseif not started_or_error then
-                print("PVE 选将流程启动失败")
+                print("选将流程启动失败")
             end
         end) then
             print("属性系统预热启动失败")

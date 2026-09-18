@@ -712,7 +712,43 @@ local function all_players_submitted(session)
     return true
 end
 
+local function training_spawn_result(player_id, rawcode)
+    -- xlik 将大部分原生 API 暴露在 J 表；保留 J.Common / 全局函数回退，避免因接口表差异中断 FINAL。
+    local get_playable = (J and J.GetPlayableMapRect) or jass.GetPlayableMapRect or GetPlayableMapRect
+    local get_center_x = (J and J.GetRectCenterX) or jass.GetRectCenterX or GetRectCenterX
+    local get_center_y = (J and J.GetRectCenterY) or jass.GetRectCenterY or GetRectCenterY
+    local x, y = nil, nil
+    if type(get_playable) == "function" and type(get_center_x) == "function" and type(get_center_y) == "function" then
+        local rect = get_playable()
+        if rect ~= nil then
+            x, y = get_center_x(rect), get_center_y(rect)
+        end
+    end
+    -- 兼容没有导出矩形 API 的旧运行时：以全部英雄出生区的包围盒中心作为同步兜底。
+    if type(x) ~= "number" or type(y) ~= "number" then
+        local min_x, min_y, max_x, max_y = nil, nil, nil, nil
+        for _, block in ipairs(config.SPAWN_BLOCKS or {}) do
+            min_x = min_x == nil and block.minX or math.min(min_x, block.minX)
+            min_y = min_y == nil and block.minY or math.min(min_y, block.minY)
+            max_x = max_x == nil and block.maxX or math.max(max_x, block.maxX)
+            max_y = max_y == nil and block.maxY or math.max(max_y, block.maxY)
+        end
+        x = min_x ~= nil and (min_x + max_x) * 0.5 or 0
+        y = min_y ~= nil and (min_y + max_y) * 0.5 or 0
+    end
+    return {
+        playerId = player_id,
+        rawcode = rawcode,
+        blockId = 0,
+        positionX = math.floor(x + 0.5),
+        positionY = math.floor(y + 0.5),
+    }
+end
 local function random_spawn_result(player_id, rawcode)
+    if current_session ~= nil and current_session.modeSelection ~= nil
+        and current_session.modeSelection.category == "TRAINING" then
+        return training_spawn_result(player_id, rawcode)
+    end
     local block_index = random_integer(1, #config.SPAWN_BLOCKS)
     local block = config.SPAWN_BLOCKS[block_index]
     local minimum_x = math.ceil(block.minX + config.SETTINGS.spawnInset)
@@ -759,6 +795,16 @@ local function is_valid_spawn_position(block_id, position_x, position_y)
         and position_x <= math.floor(block.maxX - inset)
         and position_y >= math.ceil(block.minY + inset)
         and position_y <= math.floor(block.maxY - inset)
+end
+
+local function is_valid_final_spawn_position(block_id, position_x, position_y)
+    if current_session ~= nil and current_session.modeSelection ~= nil
+        and current_session.modeSelection.category == "TRAINING" then
+        local center = training_spawn_result(0, "")
+        return center ~= nil and block_id == 0
+            and position_x == center.positionX and position_y == center.positionY
+    end
+    return is_valid_spawn_position(block_id, position_x, position_y)
 end
 
 local function apply_final(message, sender_id)
@@ -811,7 +857,7 @@ local function apply_final(message, sender_id)
             or parsed_results[player_id] ~= nil
             or not contains_rawcode(player_state.candidates, rawcode)
             or player_state.submittedRawcode ~= rawcode
-            or not is_valid_spawn_position(block_id, position_x, position_y) then
+            or not is_valid_final_spawn_position(block_id, position_x, position_y) then
             print("选将 FINAL 含有非法英雄或出生坐标")
             return
         end
@@ -989,8 +1035,9 @@ function module.start(mode_selection, on_completed)
         print("选将启动失败：已有未完成的选将会话")
         return false
     end
-    if type(mode_selection) ~= "table" or mode_selection.category ~= "PVE" then
-        print("选将启动失败：仅 PVE 模式可进入英雄选择")
+    if type(mode_selection) ~= "table"
+        or (mode_selection.category ~= "PVE" and mode_selection.category ~= "TRAINING") then
+        print("选将启动失败：仅 PVE 或训练模式可进入英雄选择")
         return false
     end
     if type(on_completed) ~= "function" then
@@ -1007,6 +1054,10 @@ function module.start(mode_selection, on_completed)
     ))
     if #player_ids < 1 then
         print("选将启动失败：未找到参与的玩家")
+        return false
+    end
+    if mode_selection.category == "TRAINING" and #player_ids ~= 1 then
+        print("选将启动失败：训练模式仅允许一名人类玩家")
         return false
     end
     if player_ids[1] ~= HOST_PLAYER_ID then

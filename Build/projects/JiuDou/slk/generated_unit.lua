@@ -19705,6 +19705,36 @@ slk_unit({
 })
 
 slk_unit({
+    ["_id_force"] = "T0D0",
+    ["_parent"] = "hfoo",
+    ["Name"] = "训练木桩",
+    ["Tip"] = "训练木桩",
+    ["Ubertip"] = "不会移动或攻击的训练木桩。",
+    ["HP"] = 9999999,
+    ["mana0"] = 0,
+    ["manaN"] = 0,
+    ["def"] = 0,
+    ["spd"] = 0,
+    ["collision"] = 20,
+    ["abilList"] = "",
+    ["cool1"] = 1,
+    ["rangeN1"] = 0,
+    ["weapsOn"] = 0,
+    ["points"] = 0,
+    ["dropItems"] = 0,
+    ["bountydice"] = 0,
+    ["bountysides"] = 0,
+    ["bountyplus"] = 0,
+    ["dice1"] = 0,
+    ["sides1"] = 0,
+    ["dmgplus1"] = 0,
+    ["acquire"] = 0,
+    ["modelScale"] = 1,
+    ["atktype1"] = "hero",
+    ["defType"] = "hero",
+})
+
+slk_unit({
     ["_id_force"] = "u0W1",
     ["_parent"] = "ogru",
     ["Name"] = "猴兵",
