@@ -1,4 +1,0 @@
-interface:
-  display_name: "War3 Formal Model Import"
-  short_description: "正式导入并验证 Warcraft III MDX/BLP 模型"
-  default_prompt: "使用 $war3-model-import 正式导入这个 Warcraft III 模型：先确认源配置、备份受影响文件，再生成物编、打包、验证并保留回滚点。"

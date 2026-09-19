@@ -65,7 +65,10 @@ function module.validate()
             end
             for _, prefix in ipairs({"", "proc"}) do
                 local attribute_key = prefix == "" and "damageAttribute" or (prefix .. "DamageAttribute")
-                local multiplier_key = prefix == "" and "damageMultiplierTenth" or (prefix .. "DamageMultiplierTenth")
+                -- 冰龙卷使用每跳百分位倍率，不应被当作缺少普通十倍定点倍率。
+                local is_tick_damage = prefix == "" and runtime.tickDamageMultiplierHundredth ~= nil
+                local multiplier_key = is_tick_damage and "tickDamageMultiplierHundredth"
+                    or (prefix == "" and "damageMultiplierTenth" or (prefix .. "DamageMultiplierTenth"))
                 local attribute, multipliers = runtime[attribute_key], runtime[multiplier_key]
                 if attribute ~= nil or multipliers ~= nil then
                     if not allowed_attributes[attribute] or type(multipliers) ~= "table" then

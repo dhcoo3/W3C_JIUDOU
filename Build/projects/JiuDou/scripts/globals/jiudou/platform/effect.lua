@@ -24,5 +24,16 @@ function module.set_position(effect, x, y, z)
     return ok
 end
 
+function module.set_size(effect, scale)
+    if effect == nil or type(scale) ~= "number" or scale <= 0 then
+        return false
+    end
+    if type(effector) ~= "table" or type(effector.size) ~= "function" then
+        return false
+    end
+    local ok = pcall(effector.size, effect, scale)
+    return ok
+end
+
 JiuDou.platform.effect = module
 return module

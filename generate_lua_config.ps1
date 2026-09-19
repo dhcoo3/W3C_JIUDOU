@@ -1861,6 +1861,28 @@ function Format-HundredthMultiplier {
     return '{0}.{1:D2}' -f [math]::Floor($Value / 100), [math]::Abs($Value % 100)
 }
 
+function Format-TickDamageLines {
+    param(
+        [Parameter(Mandatory = $true)][string]$AttributeId,
+        [Parameter(Mandatory = $true)][object[]]$Multipliers,
+        [Parameter(Mandatory = $true)][int]$TickIntervalHundredths,
+        [Parameter(Mandatory = $true)][int]$DurationHundredths
+    )
+
+    if ($TickIntervalHundredths -le 0 -or $DurationHundredths -le 0 -or $DurationHundredths % $TickIntervalHundredths -ne 0) {
+        throw '持续伤害的间隔或持续时间无效'
+    }
+    $values = New-Object System.Collections.Generic.List[string]
+    foreach ($multiplier in $Multipliers) {
+        if ([int]$multiplier -le 0) { throw '持续伤害倍率必须为正整数百分位' }
+        $values.Add((Format-HundredthMultiplier ([int]$multiplier)))
+    }
+    $levels = 1..$Multipliers.Count | ForEach-Object { [string]$_ }
+    $interval = ([decimal]$TickIntervalHundredths / 100).ToString('0.##', [System.Globalization.CultureInfo]::InvariantCulture)
+    $ticks = [int]($DurationHundredths / $TickIntervalHundredths)
+    return "持续伤害：每 $interval 秒造成 $([string]::Join(' / ', $values.ToArray()))×$(Get-DamageAttributeLabel $AttributeId)的魔法伤害（对应 $([string]::Join(' / ', $levels)) 级），共 $ticks 次。"
+}
+
 function Apply-SkillFormulaTooltips {
     param(
         [Parameter(Mandatory = $true)][object]$RoguelikeData,
@@ -1872,10 +1894,13 @@ function Apply-SkillFormulaTooltips {
         foreach ($skill in $runtimeByHero[$hero].Keys) {
             if (-not $AbilityTable.Sections.Contains($skill)) { continue }
             $runtime = $runtimeByHero[$hero][$skill]
+            $formula = $null
             $attributeKey = $null
             $multiplierKey = $null
             $prefix = '伤害'
-            if ($runtime.Contains('damageAttribute') -and $runtime.Contains('damageMultiplierTenth')) {
+            if ($runtime.Contains('damageAttribute') -and $runtime.Contains('tickDamageMultiplierHundredth') -and $runtime.Contains('tickIntervalHundredths') -and $runtime.Contains('durationHundredths')) {
+                $formula = Format-TickDamageLines ([string]$runtime['damageAttribute']) @($runtime['tickDamageMultiplierHundredth']) ([int]$runtime['tickIntervalHundredths']) ([int]$runtime['durationHundredths'])
+            } elseif ($runtime.Contains('damageAttribute') -and $runtime.Contains('damageMultiplierTenth')) {
                 $attributeKey = 'damageAttribute'
                 $multiplierKey = 'damageMultiplierTenth'
             } elseif ($runtime.Contains('procDamageAttribute') -and $runtime.Contains('procDamageMultiplierTenth')) {
@@ -1883,7 +1908,9 @@ function Apply-SkillFormulaTooltips {
                 $multiplierKey = 'procDamageMultiplierTenth'
                 $prefix = '额外伤害'
             }
-            if ($null -ne $attributeKey) {
+            if ($null -ne $formula) {
+                $formula = [string]$formula
+            } elseif ($null -ne $attributeKey) {
                 $formula = Format-SkillDamageLines ([string]$runtime[$attributeKey]) @($runtime[$multiplierKey]) $prefix
                 if ($hero -eq 'H0N0' -and $skill -eq 'A0N4' -and $runtime.Contains('finalDamageMultiplierTenth')) {
                     $formula += '|n第九箭：' + (Format-SkillDamageLines ([string]$runtime[$attributeKey]) @($runtime['finalDamageMultiplierTenth']) '中心坠日伤害')
@@ -1902,7 +1929,6 @@ function Apply-SkillFormulaTooltips {
         }
     }
 }
-
 function Get-RoguelikeRequiredField {
     param(
         [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Row,
@@ -2063,7 +2089,7 @@ function New-RoguelikeConfig {
         @{ hero = 'H0N0'; skill = 'A0N3'; prefix = 'proc' }, @{ hero = 'H0N0'; skill = 'A0N4'; prefix = '' },
         @{ hero = 'H0B0'; skill = 'A0B1'; prefix = '' },
         @{ hero = 'H0B0'; skill = 'A0B4'; prefix = 'proc' }, @{ hero = 'H0E0'; skill = 'A0E1'; prefix = '' },
-        @{ hero = 'H0E0'; skill = 'A0E2'; prefix = '' }, @{ hero = 'H0E0'; skill = 'A0E3'; prefix = 'proc' },
+        @{ hero = 'H0E0'; skill = 'A0E2'; prefix = ''; multiplierKey = 'tickDamageMultiplierHundredth'; tickDamage = $true }, @{ hero = 'H0E0'; skill = 'A0E3'; prefix = 'proc' },
         @{ hero = 'H0E0'; skill = 'A0E4'; prefix = 'summon'; multiplierKey = 'summonDamageMultiplierHundredth'; multiplierScale = 100 }
     )
     foreach ($requirement in $formulaRequirements) {
@@ -2073,6 +2099,29 @@ function New-RoguelikeConfig {
             throw "技能伤害公式缺失：$hero/$skill"
         }
         $runtime = $skillRuntime[$hero][$skill]
+        if ($requirement.ContainsKey('tickDamage')) {
+            foreach ($key in @('damageAttribute', 'tickDamageMultiplierHundredth', 'durationHundredths', 'tickIntervalHundredths', 'area', 'range', 'extraTornadoRingRadius', 'boltRange', 'boltSpeed', 'boltCollisionRadius', 'boltDamageAttribute', 'boltDamageMultiplierTenth')) {
+                if (-not $runtime.Contains($key)) { throw "冰龙卷运行时字段缺失：$hero/$skill/$key" }
+            }
+            if ([string]$runtime['damageAttribute'] -ne 'primary' -or [string]$runtime['boltDamageAttribute'] -ne 'primary') {
+                throw "冰龙卷伤害属性必须为主属性：$hero/$skill"
+            }
+            $multipliers = @($runtime['tickDamageMultiplierHundredth'])
+            $levelCount = [int]$Abilities[$skill].levels
+            if ($multipliers.Count -ne $levelCount) { throw "冰龙卷每跳伤害等级数无效：$hero/$skill" }
+            foreach ($multiplier in $multipliers) {
+                if ([int]$multiplier -le 0) { throw "冰龙卷每跳伤害必须为正整数百分位：$hero/$skill" }
+            }
+            $duration = [int]$runtime['durationHundredths']
+            $interval = [int]$runtime['tickIntervalHundredths']
+            if ($duration -le 0 -or $interval -le 0 -or $duration % $interval -ne 0 -or [int]($duration / $interval) -ne 6) {
+                throw "冰龙卷持续伤害必须为 0.5 秒一次、共 6 次：$hero/$skill"
+            }
+            foreach ($key in @('area', 'range', 'extraTornadoRingRadius', 'boltRange', 'boltSpeed', 'boltCollisionRadius', 'boltDamageMultiplierTenth')) {
+                if ([int]$runtime[$key] -le 0) { throw "冰龙卷运行时字段必须为正整数：$hero/$skill/$key" }
+            }
+            continue
+        }
         if ($runtime.Contains('damage')) { throw "技能结算禁止保留固定 damage 数组：$hero/$skill" }
         $attributeKey = $requirement.prefix + 'DamageAttribute'
         $multiplierKey = $requirement.prefix + 'DamageMultiplierTenth'

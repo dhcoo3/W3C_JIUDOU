@@ -54,6 +54,8 @@ local tracked_recovery_targets = {}
 local last_recovery_life = {}
 local pending_recovery_fraction = {}
 local first_damage_logged = false
+local damage_event_token = nil
+local pending_basic_damage = {}
 ---@type DamageNumberEntry[]
 local pool = {}
 local runtime_scope = nil
@@ -157,6 +159,30 @@ local function show_damage(target, damage, is_basic_attack)
     )
 end
 
+local function damage_key(source, target)
+    if source == nil or target == nil or type(jass.GetHandleId) ~= "function" then
+        return nil
+    end
+    return tostring(jass.GetHandleId(source)) .. ":" .. tostring(jass.GetHandleId(target))
+end
+
+local function note_damage_logged()
+    if not first_damage_logged then
+        first_damage_logged = true
+        print("伤害飘字已捕获首个英雄伤害事件")
+    end
+end
+
+local function flush_pending_basic_damage()
+    for key, pending in pairs(pending_basic_damage) do
+        if elapsed_seconds >= pending.flushAt then
+            show_damage(pending.target, pending.amount, true)
+            pending_basic_damage[key] = nil
+            note_damage_logged()
+        end
+    end
+end
+
 local function show_healing(hero, amount)
     amount = math.floor(tonumber(amount) or 0)
     if hero == nil or amount <= 0 then return end
@@ -225,6 +251,7 @@ end
 
 local function update_pool()
     elapsed_seconds = elapsed_seconds + UPDATE_INTERVAL_SECONDS
+    flush_pending_basic_damage()
     sample_hero_recovery()
     sample_recovery_targets()
     for _, entry in ipairs(pool) do
@@ -258,11 +285,32 @@ local function on_damage_report(report)
         return
     end
 
-    show_damage(target, damage, report.isBasicAttack == true)
-    if not first_damage_logged then
-        first_damage_logged = true
-        print("伤害飘字已捕获首个英雄伤害事件")
+    if report.isBasicAttack == true then
+        local key = damage_key(source, target)
+        if key ~= nil and report.kind == "native" then
+            local pending = pending_basic_damage[key]
+            if pending == nil then
+                pending_basic_damage[key] = {
+                    source = source,
+                    target = target,
+                    amount = damage,
+                    flushAt = elapsed_seconds + UPDATE_INTERVAL_SECONDS,
+                }
+            else
+                pending.amount = pending.amount + damage
+            end
+            return
+        elseif key ~= nil and report.kind == "basic_attack_bonus" then
+            local pending = pending_basic_damage[key]
+            if pending ~= nil then
+                pending.amount = pending.amount + damage
+                return
+            end
+        end
     end
+
+    show_damage(target, damage, report.isBasicAttack == true)
+    note_damage_logged()
 end
 
 --- 为新生成的敌方单位注册受伤事件。
@@ -361,17 +409,22 @@ function module.start(hero_results)
         return false
     end
     runtime_scope = lifecycle and lifecycle.acquire("combat.damage_numbers", function()
+        if damage_event_token ~= nil and events ~= nil and type(events.off) == "function" then
+            events.off(damage_event_token)
+        end
+        damage_event_token = nil
         started, update_timer = false, nil
         elapsed_seconds, next_pool_index, display_sequence = 0.0, 1, 0
         hero_sources, tracked_heroes, last_hero_life, pool = {}, {}, {}, {}
         tracked_recovery_targets, last_recovery_life, pending_recovery_fraction = {}, {}, {}
+        pending_basic_damage = {}
     end) or nil
     if not create_pool() or not damage_service.start(hero_results) then
         print("伤害飘字未启动：对象池或受伤事件创建失败")
         return false
     end
     if events ~= nil and type(events.on) == "function" then
-        events.on("combat.damage", on_damage_report, 0)
+        damage_event_token = events.on("combat.damage", on_damage_report, 0)
     else
         damage_service.subscribe(on_damage_report)
     end

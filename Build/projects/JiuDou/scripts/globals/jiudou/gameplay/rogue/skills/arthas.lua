@@ -1,4 +1,4 @@
---- 阿尔萨斯技能运行时：死亡缠绕、凛风冲击、霜之哀伤与亡灵大军。
+--- 阿尔萨斯技能运行时：死亡缠绕、冰龙卷、霜之哀伤与亡灵大军。
 --- 伤害、控制、召唤与特效分开结算；跨玩家的游戏状态不放入本地 UI 分支。
 local jass = J.Common
 
@@ -20,7 +20,9 @@ local started = false
 local heroes = {}
 local hero_states = {}
 local ghoul_owners = {}
-local control_states = {}
+local active_tornadoes = {}
+local active_frost_bolts = {}
+local transient_effects = {}
 local spell_trigger = nil
 local attack_trigger = nil
 local death_trigger = nil
@@ -42,12 +44,13 @@ local TIMED_LIFE_ID = nil
 local SOUL_ORB_MODEL = "Abilities\\Spells\\Undead\\DeathCoil\\UndeadDeathCoilMissile.mdl"
 local SOUL_IMPACT_MODEL = "Abilities\\Spells\\Undead\\DeathCoil\\UndeadDeathCoilSpecialArt.mdl"
 local HEAL_MODEL = "Abilities\\Spells\\Undead\\VampiricAura\\VampiricAuraTarget.mdl"
-local FROST_BURST_MODEL = "Abilities\\Spells\\Undead\\FrostNova\\FrostNovaCaster.mdl"
-local FROST_HIT_MODEL = "Abilities\\Spells\\Undead\\FrostNova\\FrostNovaTarget.mdl"
+local TORNADO_MODEL = "war3mapModel\\arthas_ice_tornado.mdx"
+local FROST_BOLT_MODEL = "war3mapModel\\arthas_frost_bolt.mdx"
+local FROSTMOURNE_HIT_MODEL = "Abilities\\Spells\\Undead\\FrostNova\\FrostNovaTarget.mdl"
 local FROST_STACK_MODEL = "Abilities\\Spells\\Undead\\FrostArmor\\FrostArmorDamage.mdl"
 local FROST_FULL_MODEL = "Abilities\\Spells\\Undead\\FrostArmor\\FrostArmorTarget.mdl"
 local SUMMON_MODEL = "Abilities\\Spells\\Undead\\AnimateDead\\AnimateDeadTarget.mdl"
-local SACRIFICE_MODEL = "Abilities\\Spells\\Undead\\DeathCoil\\UndeadDeathCoilSpecialArt.mdl"
+local SACRIFICE_MODEL = "Abilities\\Spells\\Undead\\DarkRitual\\DarkRitualTarget.mdl"
 local TICK_SECONDS = 0.05
 
 local function rawcode_to_integer(rawcode)
@@ -113,11 +116,28 @@ local function damage(hero, target, amount, damage_type)
     return damage_service.deal(hero, target, amount, damage_type or jass.DAMAGE_TYPE_MAGIC)
 end
 
-local function add_effect_at(path, x, y)
+local function add_effect_at(path, x, y, scale)
     if type(jass.AddSpecialEffect) ~= "function" then return nil end
-    local effect = jass.AddSpecialEffect(path, x, y)
-    if effect ~= nil and type(jass.DestroyEffect) == "function" then jass.DestroyEffect(effect) end
-    return effect
+    local visual = jass.AddSpecialEffect(path, x, y)
+    if visual == nil then return nil end
+
+    if type(scale) == "number" and scale > 0 then
+        effect.set_size(visual, scale)
+    end
+
+    transient_effects[visual] = true
+    local function finish()
+        if transient_effects[visual] then
+            transient_effects[visual] = nil
+            if type(jass.DestroyEffect) == "function" then jass.DestroyEffect(visual) end
+        end
+    end
+    if timer_service ~= nil and type(timer_service.after) == "function" then
+        timer_service.after(0.90, finish, runtime_scope)
+    else
+        finish()
+    end
+    return visual
 end
 
 local function show_hero_message(hero, message)
@@ -132,6 +152,15 @@ end
 
 local function destroy_effect(effect)
     if effect ~= nil and type(jass.DestroyEffect) == "function" then jass.DestroyEffect(effect) end
+end
+
+-- 一次性技能特效需要留出播放时间；创建后立即 DestroyEffect 会让不同模型
+-- 在游戏里都退化成同一帧的默认表现。由技能模块统一持有并在生命周期结束时清理。
+local function clear_transient_effects()
+    for visual in pairs(transient_effects) do
+        destroy_effect(visual)
+        transient_effects[visual] = nil
+    end
 end
 
 local function distance_squared(ax, ay, bx, by)
@@ -379,72 +408,179 @@ local function cast_q(hero, level)
     move_orb_through_targets(hero, targets)
 end
 
-local function rawcode_is_boss(target)
-    if jass.UNIT_TYPE_HERO ~= nil and type(jass.IsUnitType) == "function"
-        and jass.IsUnitType(target, jass.UNIT_TYPE_HERO) then return true end
-    if type(jass.GetUnitTypeId) ~= "function" then return false end
-    return string.sub(integer_to_rawcode(jass.GetUnitTypeId(target)), 1, 1) == "B"
+local function create_persistent_effect(path, x, y)
+    if type(jass.AddSpecialEffect) ~= "function" then return nil end
+    local visual = jass.AddSpecialEffect(path, x, y)
+    if visual ~= nil and effect.is_available() then
+        effect.set_position(visual, x, y, terrain_height(x, y))
+    end
+    return visual
 end
 
-local function refresh_control_speed(target, control)
-    if not is_alive(target) then
-        control_states[target] = nil
-        return
-    end
-    if now >= control.rootExpiresAt and now >= control.slowExpiresAt then
-        if type(jass.SetUnitMoveSpeed) == "function" then jass.SetUnitMoveSpeed(target, control.originalSpeed) end
-        control_states[target] = nil
-        return
-    end
-    local speed = control.originalSpeed
-    if now < control.rootExpiresAt then
-        speed = 1
-    elseif now < control.slowExpiresAt then
-        speed = math.max(1, math.floor(control.originalSpeed * 0.70))
-    end
-    if type(jass.SetUnitMoveSpeed) == "function" then jass.SetUnitMoveSpeed(target, speed) end
+local function handle_id(handle)
+    return type(jass.GetHandleId) == "function" and jass.GetHandleId(handle) or tostring(handle)
 end
 
-local function apply_control(target, duration_hundredths)
-    local control = control_states[target]
-    if control == nil then
-        control = {
-            originalSpeed = type(jass.GetUnitMoveSpeed) == "function" and jass.GetUnitMoveSpeed(target) or 270,
-            rootExpiresAt = 0,
-            slowExpiresAt = 0,
-        }
-        control_states[target] = control
+local function runtime_level_value(runtime, key, level)
+    local values = runtime[key]
+    if type(values) ~= "table" or #values == 0 then return 0 end
+    return math.floor(tonumber(values[level] or values[#values]) or 0)
+end
+
+local function damage_tornado(tornado)
+    for _, target in ipairs(sorted_enemies(tornado.hero, tornado.x, tornado.y, tornado.radius)) do
+        damage(tornado.hero, target, tornado.damageAmount, jass.DAMAGE_TYPE_MAGIC)
     end
-    local expires = now + duration_hundredths / 100
-    if rawcode_is_boss(target) or (jass.UNIT_TYPE_MAGIC_IMMUNE ~= nil
-        and type(jass.IsUnitType) == "function" and jass.IsUnitType(target, jass.UNIT_TYPE_MAGIC_IMMUNE)) then
-        control.slowExpiresAt = math.max(control.slowExpiresAt, expires)
-    else
-        control.rootExpiresAt = math.max(control.rootExpiresAt, expires)
+end
+
+local function clear_frost_bolt(index)
+    local bolt = active_frost_bolts[index]
+    if bolt ~= nil then destroy_effect(bolt.visual) end
+    table.remove(active_frost_bolts, index)
+end
+
+local function spawn_frost_bolt(tornado, index, total)
+    if total <= 0 then return end
+    local angle = tornado.angleOffset + (index - 1) * (2 * math.pi / total)
+    local bolt = {
+        hero = tornado.hero,
+        x = tornado.x,
+        y = tornado.y,
+        dx = math.cos(angle),
+        dy = math.sin(angle),
+        travelled = 0,
+        range = tornado.boltRange,
+        speed = tornado.boltSpeed,
+        collisionRadius = tornado.boltCollisionRadius,
+        damageAmount = tornado.boltDamageAmount,
+        hitTargets = {},
+        visual = create_persistent_effect(FROST_BOLT_MODEL, tornado.x, tornado.y),
+    }
+    table.insert(active_frost_bolts, bolt)
+end
+
+local function clear_tornado(index, scatter)
+    local tornado = active_tornadoes[index]
+    if tornado == nil then return end
+    destroy_effect(tornado.visual)
+    table.remove(active_tornadoes, index)
+    if scatter then
+        for bolt = 1, tornado.expiryBoltCount do
+            spawn_frost_bolt(tornado, bolt, tornado.expiryBoltCount)
+        end
     end
-    refresh_control_speed(target, control)
+end
+
+local function spawn_tornado(hero, runtime, level, x, y, index, expiry_bolt_count)
+    local duration = math.max(1, math.floor(tonumber(runtime.durationHundredths) or 0)) / 100
+    local interval = math.max(1, math.floor(tonumber(runtime.tickIntervalHundredths) or 0)) / 100
+    local tornado = {
+        hero = hero,
+        x = x,
+        y = y,
+        radius = math.max(0, math.floor(tonumber(runtime.area) or 0)),
+        damageAmount = final_skill_damage_hundredth(
+            hero,
+            runtime.damageAttribute,
+            runtime_level_value(runtime, "tickDamageMultiplierHundredth", level)
+        ),
+        expiresAt = now + duration,
+        nextTickAt = now + interval,
+        tickInterval = interval,
+        ticksRemaining = math.max(1, math.floor(duration / interval + 0.0001)),
+        expiryBoltCount = math.max(0, expiry_bolt_count),
+        boltRange = math.max(0, math.floor(tonumber(runtime.boltRange) or 0)),
+        boltSpeed = math.max(0, math.floor(tonumber(runtime.boltSpeed) or 0)),
+        boltCollisionRadius = math.max(0, math.floor(tonumber(runtime.boltCollisionRadius) or 0)),
+        boltDamageAmount = final_skill_damage(
+            hero,
+            runtime.boltDamageAttribute,
+            math.floor(tonumber(runtime.boltDamageMultiplierTenth) or 0)
+        ),
+        angleOffset = index * math.pi / 7,
+        visual = create_persistent_effect(TORNADO_MODEL, x, y),
+    }
+    table.insert(active_tornadoes, tornado)
+    -- 首跳在施法时立即结算，之后严格按 0.5 秒间隔结算。
+    damage_tornado(tornado)
+    tornado.ticksRemaining = tornado.ticksRemaining - 1
 end
 
 local function cast_w(hero, level)
     local runtime = config.get_skill_runtime("H0E0", W_RAWCODE)
     local x = type(jass.GetSpellTargetX) == "function" and jass.GetSpellTargetX() or jass.GetUnitX(hero)
     local y = type(jass.GetSpellTargetY) == "function" and jass.GetSpellTargetY() or jass.GetUnitY(hero)
-    local radius = runtime.area + skill_value(hero, W_RAWCODE, "area_add")
-    local duration = 100 + skill_value(hero, W_RAWCODE, "control_duration_hundredths_add")
-    local multiplier = runtime.damageMultiplierTenth[level] or runtime.damageMultiplierTenth[#runtime.damageMultiplierTenth]
-    local amount = final_skill_damage(hero, runtime.damageAttribute, multiplier)
-    add_effect_at(FROST_BURST_MODEL, x, y)
-    for _, target in ipairs(sorted_enemies(hero, x, y, radius)) do
-        damage(hero, target, amount, jass.DAMAGE_TYPE_MAGIC)
-        apply_control(target, duration)
-        add_effect_at(FROST_HIT_MODEL, jass.GetUnitX(target), jass.GetUnitY(target))
+    local extra_count = math.max(0, skill_value(hero, W_RAWCODE, "extra_tornado_count_add"))
+    local expiry_bolt_count = math.max(0, skill_value(hero, W_RAWCODE, "expiry_bolt_count_add"))
+    local ring_radius = math.max(0, math.floor(tonumber(runtime.extraTornadoRingRadius) or 0))
+
+    spawn_tornado(hero, runtime, level, x, y, 0, expiry_bolt_count)
+    for index = 1, extra_count do
+        local angle = (index - 1) * (2 * math.pi / extra_count)
+        spawn_tornado(
+            hero,
+            runtime,
+            level,
+            x + math.cos(angle) * ring_radius,
+            y + math.sin(angle) * ring_radius,
+            index,
+            expiry_bolt_count
+        )
     end
+end
+
+local function update_frost_tornadoes()
+    for index = #active_tornadoes, 1, -1 do
+        local tornado = active_tornadoes[index]
+        while tornado.ticksRemaining > 0 and now + 0.0001 >= tornado.nextTickAt do
+            damage_tornado(tornado)
+            tornado.ticksRemaining = tornado.ticksRemaining - 1
+            tornado.nextTickAt = tornado.nextTickAt + tornado.tickInterval
+        end
+        if now + 0.0001 >= tornado.expiresAt then clear_tornado(index, true) end
+    end
+end
+
+local function update_frost_bolts()
+    for index = #active_frost_bolts, 1, -1 do
+        local bolt = active_frost_bolts[index]
+        local step = math.min(bolt.speed * TICK_SECONDS, bolt.range - bolt.travelled)
+        if step > 0 then
+            bolt.x = bolt.x + bolt.dx * step
+            bolt.y = bolt.y + bolt.dy * step
+            bolt.travelled = bolt.travelled + step
+            if bolt.visual ~= nil and effect.is_available() then
+                effect.set_position(bolt.visual, bolt.x, bolt.y, terrain_height(bolt.x, bolt.y))
+            end
+            for _, target in ipairs(sorted_enemies(bolt.hero, bolt.x, bolt.y, bolt.collisionRadius)) do
+                local target_id = handle_id(target)
+                if not bolt.hitTargets[target_id] then
+                    bolt.hitTargets[target_id] = true
+                    damage(bolt.hero, target, bolt.damageAmount, jass.DAMAGE_TYPE_MAGIC)
+                end
+            end
+        end
+        if bolt.travelled + 0.0001 >= bolt.range then clear_frost_bolt(index) end
+    end
+end
+
+local function clear_w_effects()
+    for index = #active_tornadoes, 1, -1 do clear_tornado(index, false) end
+    for index = #active_frost_bolts, 1, -1 do clear_frost_bolt(index) end
 end
 
 local function clear_stacks(hero, state)
     state.stacks = 0
     state.stackExpiresAt = 0
     update_stack_display(hero, 0)
+end
+
+local function play_attack_slam(hero)
+    if hero == nil then return false end
+    local setter = J and J.SetUnitAnimation
+    if type(setter) ~= "function" then return false end
+    local ok = pcall(setter, hero, "attack slam")
+    return ok
 end
 
 local function apply_frostmourne_attack(hero, target)
@@ -465,15 +601,21 @@ local function apply_frostmourne_attack(hero, target)
     local multiplier = runtime.procDamageMultiplierTenth[level]
         or runtime.procDamageMultiplierTenth[#runtime.procDamageMultiplierTenth]
     local amount = final_skill_damage(hero, runtime.procDamageAttribute, multiplier)
+    local base_radius = tonumber(runtime.procRadius) or 0
+    local radius = base_radius + skill_value(hero, E_RAWCODE, "proc_radius_add")
+    local visual_scale = 1.0
+    if base_radius > 0 and radius > 0 then
+        visual_scale = radius / base_radius
+    end
+    play_attack_slam(hero)
     damage(hero, target, amount, jass.DAMAGE_TYPE_MAGIC)
-    add_effect_at(FROST_HIT_MODEL, jass.GetUnitX(target), jass.GetUnitY(target))
+    add_effect_at(FROSTMOURNE_HIT_MODEL, jass.GetUnitX(target), jass.GetUnitY(target), visual_scale)
 
-    local radius = runtime.procRadius + skill_value(hero, E_RAWCODE, "proc_radius_add")
     if radius > 0 then
         for _, victim in ipairs(sorted_enemies(hero, jass.GetUnitX(target), jass.GetUnitY(target), radius)) do
             if victim ~= target then
                 damage(hero, victim, amount, jass.DAMAGE_TYPE_MAGIC)
-                add_effect_at(SOUL_IMPACT_MODEL, jass.GetUnitX(victim), jass.GetUnitY(victim))
+                add_effect_at(SOUL_IMPACT_MODEL, jass.GetUnitX(victim), jass.GetUnitY(victim), visual_scale)
             end
         end
     end
@@ -719,7 +861,8 @@ local function update_states()
             switch_to_summon(hero)
         end
     end
-    for target, control in pairs(control_states) do refresh_control_speed(target, control) end
+    update_frost_tornadoes()
+    update_frost_bolts()
 end
 
 local function register_events()
@@ -774,6 +917,9 @@ end
 function module.start(hero_results)
     if started then return false end
     runtime_scope = lifecycle and lifecycle.acquire("rogue.skills.arthas", function()
+        clear_w_effects()
+        clear_transient_effects()
+        active_tornadoes, active_frost_bolts = {}, {}
         started, spell_trigger, attack_trigger, death_trigger, update_timer = false, nil, nil, nil, nil
     end) or nil
     started = true
@@ -794,6 +940,8 @@ function module.start(hero_results)
 end
 
 function module.stop()
+    clear_w_effects()
+    clear_transient_effects()
     return lifecycle ~= nil and lifecycle.release("rogue.skills.arthas") or false
 end
 
