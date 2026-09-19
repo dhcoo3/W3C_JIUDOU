@@ -8,6 +8,7 @@ local skill_damage = JiuDou.module("gameplay.combat.skill_damage")
 local damage_service = JiuDou.module("gameplay.combat.damage")
 local recovery = JiuDou.module("gameplay.combat.recovery")
 local effect = JiuDou.module("platform.effect")
+local animation_timing = JiuDou.module("gameplay.rogue.animation_timing")
 
 local counter_ui = UIKit("jiudou_arthas_counter")
 
@@ -575,11 +576,12 @@ local function clear_stacks(hero, state)
     update_stack_display(hero, 0)
 end
 
-local function play_attack_slam(hero)
+local function play_attack_slam(hero, animation_index)
     if hero == nil then return false end
-    local setter = J and J.SetUnitAnimation
+    local setter = J and J.SetUnitAnimationByIndex
     if type(setter) ~= "function" then return false end
-    local ok = pcall(setter, hero, "attack slam")
+    local index = math.max(0, math.floor(tonumber(animation_index) or 11))
+    local ok = pcall(setter, hero, index)
     return ok
 end
 
@@ -607,25 +609,51 @@ local function apply_frostmourne_attack(hero, target)
     if base_radius > 0 and radius > 0 then
         visual_scale = radius / base_radius
     end
-    play_attack_slam(hero)
-    damage(hero, target, amount, jass.DAMAGE_TYPE_MAGIC)
-    add_effect_at(FROSTMOURNE_HIT_MODEL, jass.GetUnitX(target), jass.GetUnitY(target), visual_scale)
 
+    -- 在攻击事件发生时锁定目标列表；延时期间目标移动不会改变本次溅射的目标集合。
+    local splash_targets = {}
     if radius > 0 then
         for _, victim in ipairs(sorted_enemies(hero, jass.GetUnitX(target), jass.GetUnitY(target), radius)) do
             if victim ~= target then
-                damage(hero, victim, amount, jass.DAMAGE_TYPE_MAGIC)
-                add_effect_at(SOUL_IMPACT_MODEL, jass.GetUnitX(victim), jass.GetUnitY(victim), visual_scale)
+                splash_targets[#splash_targets + 1] = victim
             end
         end
     end
 
-    local heal_multiplier = skill_value(hero, E_RAWCODE, "proc_heal_multiplier_tenth_add")
-    if heal_multiplier > 0 then
-        recovery.apply_fixed(hero, recovery.calculate_fixed(hero, heal_multiplier, 0))
-        add_effect_at(HEAL_MODEL, jass.GetUnitX(hero), jass.GetUnitY(hero))
-    end
+    local timing = animation_timing.get("H0E0", E_RAWCODE, "proc")
+    local animation_index = timing and tonumber(timing.animationIndex) or 11
+    local hit_seconds = timing and tonumber(timing.hitSeconds) or 1.0
+    hit_seconds = math.max(0, hit_seconds)
+    play_attack_slam(hero, animation_index)
+
+    -- 动画命中点之前立即清层，避免延时期间再次满层触发同一斩击。
     clear_stacks(hero, state)
+
+    local function settle_proc()
+        if is_alive(target) then
+            damage(hero, target, amount, jass.DAMAGE_TYPE_MAGIC)
+            add_effect_at(FROSTMOURNE_HIT_MODEL, jass.GetUnitX(target), jass.GetUnitY(target), visual_scale)
+        end
+
+        for _, victim in ipairs(splash_targets) do
+            if is_alive(victim) then
+                damage(hero, victim, amount, jass.DAMAGE_TYPE_MAGIC)
+                add_effect_at(SOUL_IMPACT_MODEL, jass.GetUnitX(victim), jass.GetUnitY(victim), visual_scale)
+            end
+        end
+
+        local heal_multiplier = skill_value(hero, E_RAWCODE, "proc_heal_multiplier_tenth_add")
+        if heal_multiplier > 0 then
+            recovery.apply_fixed(hero, recovery.calculate_fixed(hero, heal_multiplier, 0))
+            add_effect_at(HEAL_MODEL, jass.GetUnitX(hero), jass.GetUnitY(hero))
+        end
+    end
+
+    if timer_service ~= nil and type(timer_service.after) == "function" then
+        timer_service.after(hit_seconds, settle_proc, runtime_scope)
+    else
+        settle_proc()
+    end
 end
 
 local function count_living_ghouls(state)

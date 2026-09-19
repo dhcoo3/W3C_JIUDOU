@@ -5,6 +5,7 @@ local hero_stats = JiuDou.module("gameplay.hero.stats")
 local rogue = JiuDou.module("gameplay.rogue.main")
 local gm_panel = JiuDou.module("gameplay.training.gm_panel")
 local damage_numbers = JiuDou.module("gameplay.combat.damage_numbers")
+local MAX_ATTACK_SPEED_BONUS = hero_stats.ATTACK_SPEED_MAX_BONUS_PERCENT or 400
 
 local module = {}
 local lifecycle = JiuDou.core and JiuDou.core.lifecycle
@@ -25,6 +26,7 @@ local scope = nil
 local hero = nil
 local player_id = nil
 local attack_bonus = 0
+local attack_speed_bonus = 0
 local death_trigger = nil
 local slots = {}
 local slot_by_unit = {}
@@ -164,6 +166,21 @@ local function on_gm_command(sync_data)
         else
             status("攻击力修改失败")
         end
+    elseif action == "attack_speed" then
+        local previous_attack_speed_bonus = attack_speed_bonus
+        attack_speed_bonus = math.min(MAX_ATTACK_SPEED_BONUS, attack_speed_bonus + amount)
+        local applied_attack_speed_bonus = attack_speed_bonus - previous_attack_speed_bonus
+        if hero_stats.set_source(hero, "training.gm.attack_speed", {
+            attack_speed_percent = attack_speed_bonus,
+        }) then
+            if applied_attack_speed_bonus > 0 then
+                status("攻击速度 +" .. tostring(applied_attack_speed_bonus) .. "%，累计 +" .. tostring(attack_speed_bonus) .. "%")
+            else
+                status("攻击速度已达到上限（总攻速 " .. tostring(hero_stats.ATTACK_SPEED_MAX_PERCENT) .. "%）")
+            end
+        else
+            status("攻击速度修改失败")
+        end
     else
         status("未知 GM 指令")
     end
@@ -181,7 +198,9 @@ local function clear_runtime()
     end
     slots, slot_by_unit = {}, {}
     if hero ~= nil then hero_stats.clear_source(hero, "training.gm.attack") end
-    started, scope, hero, player_id, attack_bonus, death_trigger = false, nil, nil, nil, 0, nil
+    if hero ~= nil then hero_stats.clear_source(hero, "training.gm.attack_speed") end
+    started, scope, hero, player_id, attack_bonus, attack_speed_bonus, death_trigger =
+        false, nil, nil, nil, 0, 0, nil
 end
 
 function module.start(hero_results)

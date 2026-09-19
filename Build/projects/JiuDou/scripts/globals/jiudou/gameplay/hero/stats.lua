@@ -12,6 +12,10 @@ local timer_service = JiuDou.core and JiuDou.core.timer
 local resource_api = JiuDou.core and JiuDou.core.resource
 
 local module = {}
+local ATTACK_SPEED_MIN_PERCENT = 1
+local ATTACK_SPEED_MAX_PERCENT = 500
+module.ATTACK_SPEED_MAX_PERCENT = ATTACK_SPEED_MAX_PERCENT
+module.ATTACK_SPEED_MAX_BONUS_PERCENT = ATTACK_SPEED_MAX_PERCENT - 100
 local empty_values = attribute_schema.empty
 local copy_values = attribute_schema.copy
 
@@ -93,8 +97,11 @@ local function sum_sources(hero)
 end
 
 local function calculate_attack_speed_projection(state, total)
-    -- 100%=标准攻速；500%=标准攻速的五倍。属性来源按百分点直接相加。
-    local attack_speed_percent = math.max(1, (state.baseAttackSpeedPercent or 100) + total.attack_speed_percent)
+    -- 100%=标准攻速；最高 500%=标准攻速的五倍，超出原生 +400% 加成上限的部分不生效。
+    local attack_speed_percent = math.max(
+        ATTACK_SPEED_MIN_PERCENT,
+        math.min(ATTACK_SPEED_MAX_PERCENT, (state.baseAttackSpeedPercent or 100) + total.attack_speed_percent)
+    )
     -- AIsx 使用十分之一百分比定点。敏捷原生攻速已由游戏常数归零。
     local desired_attack_speed = (attack_speed_percent - 100) * 10
     return attack_speed_percent, desired_attack_speed
@@ -429,7 +436,7 @@ function module.get_attack_speed_debug(hero)
         heroRawcode = state.heroRawcode,
         baseAttackCooldown = math.max(0, tonumber(unit.cool1) or 0),
         configuredPercent = math.max(1, math.floor(tonumber(state.baseAttackSpeedPercent) or 100)),
-        sourceBonusPercent = math.floor(tonumber(total.attack_speed_percent) or 0),
+        sourceBonusPercent = target_percent - math.max(1, math.floor(tonumber(state.baseAttackSpeedPercent) or 100)),
         targetPercent = target_percent,
         expectedAttackIntervalSeconds = target_percent > 0
             and math.floor((math.max(0, tonumber(unit.cool1) or 0) * 100 / target_percent) * 1000 + 0.5) / 1000 or 0,

@@ -45,7 +45,7 @@ function module.start(on_submit)
     title:size(0.40, 0.026):relation(UI_ALIGN_TOP, panel, UI_ALIGN_TOP, 0, -0.020):text("训练模式 GM 控制台"):fontSize(14)
 
     local hint = UIText("jiudou_training_gm:hint", panel)
-    hint:size(0.40, 0.020):relation(UI_ALIGN_TOP, panel, UI_ALIGN_TOP, 0, -0.052):text("输入 1 - 9,999,999 的整数"):fontSize(10)
+    hint:size(0.40, 0.020):relation(UI_ALIGN_TOP, panel, UI_ALIGN_TOP, 0, -0.052):text("输入整数；攻速按百分比增加"):fontSize(10)
 
     input_frame = japi.DZ_CreateFrameByTagName("EDITBOX", "JiuDouTrainingGMInput", panel:handle(), "EscMenuEditBoxTemplate", 0)
     japi.DZ_FrameSetSize(input_frame, 0.38, 0.028)
@@ -60,7 +60,7 @@ function module.start(on_submit)
 
     local function command_button(key, text, x, action)
         local button = UIButton("jiudou_training_gm:" .. key, panel)
-        button:size(0.105, 0.040):relation(UI_ALIGN_TOP, panel, UI_ALIGN_TOP, x, -0.155):text(text):fontSize(9)
+        button:size(0.085, 0.040):relation(UI_ALIGN_TOP, panel, UI_ALIGN_TOP, x, -0.155):text(text):fontSize(9)
         button:onEvent(eventKind.uiLeftClick, function()
             if type(submit) == "function" then
                 submit(action, input_text())
@@ -69,10 +69,11 @@ function module.start(on_submit)
         return button
     end
 
-    command_button("experience", "添加经验", -0.168, "experience")
-    command_button("attack", "增加攻击力", -0.056, "attack")
-    command_button("rogue", "获得肉鸽", 0.056, "rogue")
-    command_button("full_restore", "回满生命/MP", 0.168, "restore")
+    command_button("experience", "添加经验", -0.18, "experience")
+    command_button("attack", "增加攻击力", -0.09, "attack")
+    command_button("attack_speed", "增加攻速", 0, "attack_speed")
+    command_button("rogue", "获得肉鸽", 0.09, "rogue")
+    command_button("full_restore", "回满生命/MP", 0.18, "restore")
 
     panel:onEvent(eventKind.uiHide, "gm_input_hide", function()
         set_input_visible(false)

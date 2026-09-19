@@ -156,7 +156,7 @@ slk_unit({
     ["dice1"] = 1,
     ["sides1"] = 7,
     ["dmgplus1"] = 29,
-    ["dmgpt1"] = 0.2,
+    ["dmgpt1"] = 0.563,
     ["backsw1"] = 0.3,
     ["file"] = "models\\arthas_v2\\Arthas_v2",
     ["modelScale"] = 1,
